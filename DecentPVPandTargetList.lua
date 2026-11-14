@@ -2,7 +2,7 @@
 local ADDON, ns = ...
 local PREFIX = "DPTL1"
 local MAX_TARGETS = 3
-local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal" }
+local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", pendingStats = false }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
     Alliance = { 0.16, 0.42, 0.88 },
@@ -26,19 +26,23 @@ local function safe(s, max)
     return string.sub(s, 1, max or 48)
 end
 local function guildReady() return IsInGuild and IsInGuild() end
+local function chatRestricted()
+    if InCombatLockdown and InCombatLockdown() then return true end
+    if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown() then return true end
+    if C_ChatInfo and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted
+        and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted() then return true end
+    return false
+end
+
 local function sendGuild(msg)
     if not guildReady() then return false, "Join a guild first." end
     if not C_ChatInfo or not C_ChatInfo.SendAddonMessage then
         return false, "This client does not expose guild addon messaging."
     end
-    if C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown() then
+    if chatRestricted() then
         return false, "The game currently restricts addon messages. Try again later or outside this instance."
     end
-    if C_ChatInfo.AreOutgoingAddonChatMessagesRestricted
-        and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted() then
-        return false, "This realm currently restricts outgoing addon messages."
-    end
-    -- All sends are reached from an explicit user click, never from combat or a timer.
+    -- Automatic reports are deferred until the client leaves combat and permits addon messages.
     local called, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "GUILD")
     if not called then return false, "The client blocked guild sharing." end
     if Enum and Enum.SendAddonMessageResult and result
@@ -73,6 +77,12 @@ local function shareStats()
     return sendGuild(table.concat({ "S", today(), thisWeek(), d, w, a }, "|"))
 end
 
+local function sharePendingStats()
+    if not DPTL_DB.pendingStats or chatRestricted() then return end
+    local ok = shareStats()
+    if ok then DPTL_DB.pendingStats = false end
+end
+
 local function recordKill(victim)
     local rec = ownStats()
     local d, w = today(), thisWeek()
@@ -101,6 +111,8 @@ local root = CreateFrame("Frame")
 root:RegisterEvent("ADDON_LOADED")
 root:RegisterEvent("PLAYER_LOGIN")
 root:RegisterEvent("CHAT_MSG_ADDON")
+root:RegisterEvent("PLAYER_PVP_KILLS_CHANGED")
+root:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 local ui = { rows = {}, tab = "kills" }
 local function info(text)
@@ -201,7 +213,7 @@ end
 refresh = function()
     clearRows()
     if ui.tab == "kills" then
-        label(ui.body, "Guild rankings — players share snapshots manually, after combat.", 6, 0, 510)
+        label(ui.body, "Guild rankings — credited honorable kills are tracked automatically.", 6, 0, 510)
         local categories = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
         for column, category in ipairs(categories) do
             local x = 6 + (column - 1) * 174
@@ -222,7 +234,7 @@ refresh = function()
                 table.insert(ui.rows, entry)
             end
         end
-        label(ui.body, "Record a kill after combat (manual entry; no combat event reading).", 6, -286, 510)
+        label(ui.body, "Add a missed kill manually (optional victim name).", 6, -286, 510)
         ui.victimBox = edit(ui.body, "Defeated player (optional)", 6, -307, 175)
         button(ui.body, "Record kill", 195, -307, 96, function()
             if InCombatLockdown and InCombatLockdown() then
@@ -305,8 +317,8 @@ refresh = function()
             local ok, err = shareStats()
             if ok then info("Guild stats shared.") else info(err) end
         end)
-        row("Combat-log kill reading and automatic combat-time messaging are disabled for Forever.", -108)
-        row("Add your kills manually after combat; Share stats sends your current totals.", -132)
+        row("Honorable kill credit is detected automatically; victim names may not be provided by Forever.", -108)
+        row("Guild reports are shared automatically when addon messaging is allowed, after combat if needed.", -132)
     end
 end
 
@@ -411,6 +423,21 @@ root:SetScript("OnEvent", function(self, event, ...)
         end
     elseif event == "CHAT_MSG_ADDON" then
         onAddonMessage(...)
+    elseif event == "PLAYER_PVP_KILLS_CHANGED" then
+        -- This event represents the player's own honorable kill credit. Forever may
+        -- withhold the victim name, so only store a name if the event's unit token resolves safely.
+        local unitTarget = ...
+        local victim
+        if type(unitTarget) == "string" then
+            local ok, name = pcall(UnitName, unitTarget)
+            if ok and type(name) == "string" and name ~= "" then victim = name end
+        end
+        recordKill(victim or "")
+        DPTL_DB.pendingStats = true
+        if ui.tab == "kills" then refresh() end
+        sharePendingStats()
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        sharePendingStats()
     end
 end)
 
