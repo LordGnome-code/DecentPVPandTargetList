@@ -139,8 +139,16 @@ local function info(text)
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff62c5ffDPTL:|r " .. text) end
 end
 
+local function track(widget)
+    table.insert(ui.rows, widget)
+    return widget
+end
+
 local function clearRows()
-    for _, row in ipairs(ui.rows) do row:Hide(); row:SetParent(nil) end
+    for _, widget in ipairs(ui.rows) do
+        if widget and widget.Hide then widget:Hide() end
+        if widget and widget.SetParent then widget:SetParent(nil) end
+    end
     ui.rows = {}
 end
 local function label(parent, text, x, y, width, font)
@@ -149,25 +157,23 @@ local function label(parent, text, x, y, width, font)
     fs:SetWidth(width or 500)
     fs:SetJustifyH("LEFT")
     fs:SetText(text)
-    return fs
+    return track(fs)
 end
 local function row(text, y)
-    local fs = label(ui.body, text, 6, y, 510)
-    table.insert(ui.rows, fs)
-    return fs
+    return label(ui.body, text, 6, y, 510)
 end
 local function button(parent, text, x, y, width, action)
     local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     b:SetSize(width, 24); b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
     b:SetText(text); b:SetScript("OnClick", action)
-    return b
+    return track(b)
 end
 local function edit(parent, title, x, y, width)
     label(parent, title, x, y, width)
     local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
     box:SetSize(width, 22); box:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y - 19)
     box:SetAutoFocus(false); box:SetMaxLetters(48)
-    return box
+    return track(box)
 end
 
 local refresh
@@ -248,7 +254,7 @@ local function dropdown(parent, title, values, x, y, width, initial, changed)
             UIDropDownMenu_AddButton(info, level)
         end
     end)
-    return menu
+    return track(menu)
 end
 
 local function racePortrait(race)
@@ -262,53 +268,6 @@ local function racePortrait(race)
     return race and textures[race] and ("Interface\\Icons\\" .. textures[race])
 end
 
-local function addTargetPortrait(parent, target, x, y)
-    local raceIcon = parent:CreateTexture(nil, "ARTWORK")
-    raceIcon:SetSize(24, 24)
-    raceIcon:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
-    raceIcon:SetTexture(racePortrait(target.race) or "Interface\\Icons\\INV_Misc_QuestionMark")
-    table.insert(ui.rows, raceIcon)
-    local classIcon = parent:CreateTexture(nil, "ARTWORK")
-    classIcon:SetSize(24, 24)
-    classIcon:SetPoint("TOPLEFT", raceIcon, "TOPRIGHT", 2, 0)
-    local atlas = target.class and ("class-icon-" .. string.lower(target.class:gsub(" ", "")))
-    if atlas and classIcon.SetAtlas then classIcon:SetAtlas(atlas) end
-    if not atlas or not classIcon.SetAtlas then classIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
-    table.insert(ui.rows, classIcon)
-end
-
-local function createTargetRow(parent, target, y)
-    local rowFrame = CreateFrame("Frame", nil, parent)
-    rowFrame:SetSize(500, 44)
-    rowFrame:SetPoint("TOPLEFT", parent, "TOPLEFT", 4, y)
-    rowFrame:EnableMouse(true)
-    local raceIcon = rowFrame:CreateTexture(nil, "ARTWORK")
-    raceIcon:SetSize(28, 28); raceIcon:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", 0, -2)
-    raceIcon:SetTexture(racePortrait(target.race) or "Interface\\Icons\\INV_Misc_QuestionMark")
-    local classIcon = rowFrame:CreateTexture(nil, "ARTWORK")
-    classIcon:SetSize(28, 28); classIcon:SetPoint("TOPLEFT", raceIcon, "TOPRIGHT", 3, 0)
-    local atlas = target.class and ("class-icon-" .. string.lower(target.class:gsub(" ", "")))
-    if atlas and classIcon.SetAtlas then classIcon:SetAtlas(atlas) else classIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
-    local reward = target.reward
-    if reward == "" then reward = string.format("%sg %ss %sc", target.gold, target.silver, target.copper) end
-    local details = rowFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    details:SetPoint("TOPLEFT", classIcon, "TOPRIGHT", 7, 0)
-    details:SetWidth(385); details:SetJustifyH("LEFT")
-    details:SetText(string.format("%s (%s %s) | %s | %s\nReward: %s | Proof: %s",
-        target.name, target.race or "?", target.class or "?", date("%b %d", target.created or time()),
-        target.owner or "Unknown submitter", reward, target.proof or ""))
-    if target.owner == playerName() then
-        local remove = button(rowFrame, "Remove", 428, -8, 64, function()
-            local ok, err = sendGuild(table.concat({ "D", target.id }, "|"))
-            if not ok then info(err); return end
-            DPTL_DB.targets[targetKey(target.owner, target.id)] = nil
-            refresh()
-        end)
-        table.insert(ui.rows, remove)
-    end
-    table.insert(ui.rows, rowFrame)
-end
-
 refresh = function()
     clearRows()
     if ui.tab ~= "targets" and ui.targetScroll then ui.targetScroll:Hide() end
@@ -318,7 +277,6 @@ refresh = function()
         for column, category in ipairs(categories) do
             local x = 6 + (column - 1) * 174
             local header = label(ui.body, category[1] .. " top 10", x, -26, 166)
-            table.insert(ui.rows, header)
             local list = {}
             for name, rec in pairs(DPTL_DB.kills) do
                 local d, w, a = counts(rec)
@@ -331,7 +289,6 @@ refresh = function()
             for i = 1, math.min(10, #list) do
                 local entry = label(ui.body, string.format("%2d. %-16s %d", i,
                     string.sub(list[i].name, 1, 16), list[i].value), x, -48 - (i - 1) * 23, 166)
-                table.insert(ui.rows, entry)
             end
         end
         label(ui.body, "Add a missed kill manually (optional victim name).", 6, -286, 510)
@@ -355,7 +312,7 @@ refresh = function()
         for _, t in pairs(DPTL_DB.targets) do table.insert(targets, t) end
         table.sort(targets, function(a, b) return (a.created or 0) > (b.created or 0) end)
         local listTop = -25
-        local listBottom = -225
+        local listBottom = -140
         if not ui.targetScroll then
             ui.targetScroll = CreateFrame("ScrollFrame", "DPTLTargetScroll", ui.body, "UIPanelScrollFrameTemplate")
             ui.targetScroll:SetPoint("TOPLEFT", ui.body, "TOPLEFT", 2, listTop)
@@ -398,7 +355,7 @@ refresh = function()
         end
         ui.targetContent:SetSize(500, math.max(1, #targets * 48))
         ui.targetScroll:SetVerticalScroll(0)
-        local y = -235
+        local y = -150
         if not guildReady() then row("Join a guild to share targets and rankings.", y); y = y - 24 end
         if ownedTargetCount(playerName()) >= MAX_TARGETS then
             row("You have reached the limit of 3 active targets.", y)
