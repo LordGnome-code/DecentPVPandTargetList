@@ -28,12 +28,34 @@ local function safe(s, max)
     return string.sub(s, 1, max or 48)
 end
 local function guildReady() return IsInGuild and IsInGuild() end
-local function chatRestricted()
-    if InCombatLockdown and InCombatLockdown() then return true end
-    if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown() then return true end
-    if C_ChatInfo and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted
-        and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted() then return true end
+local function checkRestriction(name, fn)
+    if type(fn) ~= "function" then return false end
+    local ok, restricted = pcall(fn)
+    if not ok then return true, name .. " check errored: " .. tostring(restricted) end
+    if restricted then return true, name .. " returned true" end
     return false
+end
+
+local function chatRestrictionReason()
+    local restricted, reason = checkRestriction("InCombatLockdown()", InCombatLockdown)
+    if restricted then return reason end
+    restricted, reason = checkRestriction("C_ChatInfo.InChatMessagingLockdown()",
+        C_ChatInfo and C_ChatInfo.InChatMessagingLockdown)
+    if restricted then return reason end
+    restricted, reason = checkRestriction("C_ChatInfo.AreOutgoingAddonChatMessagesRestricted()",
+        C_ChatInfo and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted)
+    if restricted then return reason end
+    return nil
+end
+
+local function sendResultName(result)
+    local values = Enum and Enum.SendAddonMessageResult
+    if type(values) == "table" then
+        for name, value in pairs(values) do
+            if value == result then return name end
+        end
+    end
+    return tostring(result)
 end
 
 local function sendGuild(msg)
@@ -41,15 +63,14 @@ local function sendGuild(msg)
     if not C_ChatInfo or not C_ChatInfo.SendAddonMessage then
         return false, "This client does not expose guild addon messaging."
     end
-    if chatRestricted() then
-        return false, "The game currently restricts addon messages. Try again later or outside this instance."
-    end
+    local restriction = chatRestrictionReason()
+    if restriction then return false, "Guild message blocked before sending: " .. restriction .. "." end
     -- Automatic reports are deferred until the client leaves combat and permits addon messages.
     local called, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "GUILD")
-    if not called then return false, "The client blocked guild sharing." end
+    if not called then return false, "C_ChatInfo.SendAddonMessage errored: " .. tostring(result) end
     if Enum and Enum.SendAddonMessageResult and result
         and result ~= Enum.SendAddonMessageResult.Success then
-        return false, "The game did not accept the guild message (result " .. tostring(result) .. ")."
+        return false, "C_ChatInfo.SendAddonMessage returned " .. sendResultName(result) .. " (" .. tostring(result) .. ")."
     end
     return true
 end
@@ -96,7 +117,7 @@ local function shareStats()
 end
 
 local function sharePendingStats()
-    if not DPTL_DB.pendingStats or chatRestricted() then return end
+    if not DPTL_DB.pendingStats or chatRestrictionReason() then return end
     local ok = shareStats()
     if ok then DPTL_DB.pendingStats = false end
 end
