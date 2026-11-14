@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: Decent PvP and Target List
+## Notes: Guild PvP kill rankings and player target board for WoW Forever.
+## Author: LordGnome
+## Version: 1.0.0
+## SavedVariables: DPTL_DB
+
+DecentPVPandTargetList.lua
