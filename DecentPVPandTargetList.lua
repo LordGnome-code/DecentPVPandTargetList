@@ -3,7 +3,7 @@ local ADDON, ns = ...
 local PREFIX = "DPTL1"
 local SYNC_SECONDS = 300
 local MAX_TARGETS = 3
-local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", minimapAngle = 220 }
+local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal" }
 
 local function fillDefaults(dst, src)
     for k, v in pairs(src) do
@@ -230,7 +230,7 @@ end
 
 local function buildUI()
     if ui.frame then return end
-    local f = CreateFrame("Frame", "DPTLMainFrame", UIParent)
+    local f = CreateFrame("Frame", "DPTLMainFrame", UIParent, "BackdropTemplate")
     ui.frame = f; f:SetSize(560, 430); f:SetPoint("CENTER"); f:SetMovable(true)
     f:EnableMouse(true); f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
@@ -247,66 +247,6 @@ local function buildUI()
     ui.body:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -72)
     ui.body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -16, 14)
     refresh()
-end
-
-local function positionMinimapButton(button)
-    local angle = math.rad(DPTL_DB.minimapAngle or 220)
-    local radius = 80
-    button:ClearAllPoints()
-    button:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
-end
-
-local function createMinimapButton()
-    if ui.minimapButton or not Minimap then return end
-    local b = CreateFrame("Button", "DPTLMinimapButton", Minimap)
-    ui.minimapButton = b
-    b:SetSize(32, 32)
-    b:SetFrameStrata("MEDIUM")
-    b:SetFrameLevel(Minimap:GetFrameLevel() + 8)
-    b:EnableMouse(true)
-    b:RegisterForClicks("LeftButtonUp")
-    b:RegisterForDrag("LeftButton")
-
-    local icon = b:CreateTexture(nil, "BACKGROUND")
-    icon:SetTexture("Interface\\Icons\\INV_Sword_39") -- Thunderfury
-    icon:SetSize(20, 20)
-    icon:SetPoint("CENTER", b, "CENTER", 0, 0)
-    b.icon = icon
-
-    local border = b:CreateTexture(nil, "OVERLAY")
-    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-    border:SetSize(54, 54)
-    border:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
-
-    local highlight = b:CreateTexture(nil, "HIGHLIGHT")
-    highlight:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
-    highlight:SetBlendMode("ADD")
-    highlight:SetAllPoints(icon)
-
-    b:SetScript("OnClick", function()
-        if ui.frame:IsShown() then ui.frame:Hide() else refresh(); ui.frame:Show() end
-    end)
-    b:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("Decent PvP & Target List")
-        GameTooltip:AddLine("Click to open", 1, 1, 1)
-        GameTooltip:Show()
-    end)
-    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    b:SetScript("OnDragStart", function(self)
-        self:SetScript("OnUpdate", function(button)
-            local scale = Minimap:GetEffectiveScale()
-            local cx, cy = Minimap:GetCenter()
-            local mx, my = GetCursorPosition()
-            local angle = math.atan2(my / scale - cy, mx / scale - cx)
-            DPTL_DB.minimapAngle = math.deg(angle)
-            positionMinimapButton(button)
-        end)
-    end)
-    b:SetScript("OnDragStop", function(self)
-        self:SetScript("OnUpdate", nil)
-    end)
-    positionMinimapButton(b)
 end
 
 local function onAddonMessage(prefix, message, channel, sender)
@@ -350,7 +290,6 @@ root:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_LOGIN" then
         if RegisterAddonMessagePrefix then RegisterAddonMessagePrefix(PREFIX) end
         buildUI()
-        createMinimapButton()
         SLASH_DPTL1 = "/dptl"
         SLASH_DPTL2 = "/targetlist"
         SlashCmdList.DPTL = function()
@@ -378,3 +317,9 @@ root:SetScript("OnEvent", function(self, event, ...)
         end
     end
 end)
+
+-- WoW Forever's Addon Compartment entry is also collected by IconBag.
+function DPTL_AddonCompartmentClick()
+    if not ui.frame then buildUI() end
+    if ui.frame:IsShown() then ui.frame:Hide() else refresh(); ui.frame:Show() end
+end
