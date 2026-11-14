@@ -18,7 +18,7 @@ A guild PvP addon for **WoW Forever** (interface 16001). It has no external libr
 - Rewards can be entered as gold, silver, and copper or as free-form text.
 - Each character can maintain up to three active targets; only the character that created a target can remove it.
 - Offers a compact Normal layout and a Blizzard-like dialog layout under Settings.
-- Adds a Thunderfury Addon Compartment entry that toggles the main window. IconBag - Forever collects Addon Compartment entries into its icon drawer.
+- Adds a standard sword Addon Compartment icon that toggles the main window. IconBag - Forever collects Addon Compartment entries into its icon drawer.
 
 ## Notes
 
