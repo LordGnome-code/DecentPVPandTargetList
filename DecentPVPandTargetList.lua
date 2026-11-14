@@ -61,17 +61,33 @@ local function toNumber(value) return tonumber(value) or 0 end
 local function ownStats()
     local name = playerName()
     if not DPTL_DB.kills[name] then
-        DPTL_DB.kills[name] = { total = 0, daily = {}, weekly = {} }
+        DPTL_DB.kills[name] = { total = 0, lifetime = nil, daily = {}, weekly = {} }
     end
     return DPTL_DB.kills[name]
 end
 
+local function lifetimeHonorableKills()
+    if not GetPVPLifetimeStats then return nil end
+    local ok, lifetime = pcall(GetPVPLifetimeStats)
+    if ok and type(lifetime) == "number" then return lifetime end
+    return nil
+end
+
+local function syncLifetimeKills()
+    local total = lifetimeHonorableKills()
+    if total == nil then return false end
+    ownStats().lifetime = total
+    return true
+end
+
 local function counts(rec)
     return toNumber(rec.daily and rec.daily[today()]),
-        toNumber(rec.weekly and rec.weekly[thisWeek()]), toNumber(rec.total)
+        toNumber(rec.weekly and rec.weekly[thisWeek()]),
+        toNumber(rec.lifetime ~= nil and rec.lifetime or rec.total)
 end
 
 local function shareStats()
+    syncLifetimeKills()
     local rec = ownStats()
     local d, w, a = counts(rec)
     return sendGuild(table.concat({ "S", today(), thisWeek(), d, w, a }, "|"))
@@ -93,6 +109,7 @@ local function recordKill(victim)
     for key in pairs(rec.weekly) do if key ~= w then rec.weekly[key] = nil end end
     rec.lastVictim = safe(victim, 35)
     rec.lastKill = time()
+    syncLifetimeKills()
 end
 
 local function targetKey(owner, id) return owner .. ":" .. tostring(id) end
@@ -411,7 +428,9 @@ root:SetScript("OnEvent", function(self, event, ...)
         if type(DPTL_DB) ~= "table" then DPTL_DB = {} end
         fillDefaults(DPTL_DB, DB_DEFAULTS)
         ownStats()
+        syncLifetimeKills()
     elseif event == "PLAYER_LOGIN" then
+        syncLifetimeKills()
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
             C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
         end
@@ -433,6 +452,7 @@ root:SetScript("OnEvent", function(self, event, ...)
             if ok and type(name) == "string" and name ~= "" then victim = name end
         end
         recordKill(victim or "")
+        syncLifetimeKills()
         DPTL_DB.pendingStats = true
         if ui.tab == "kills" then refresh() end
         sharePendingStats()

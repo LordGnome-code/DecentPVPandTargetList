@@ -11,7 +11,7 @@ A guild PvP addon for **WoW Forever** (interface 16001). It has no external libr
 
 ## Features
 
-- Tracks daily, weekly, and lifetime honorable kill credits automatically from Forever's `PLAYER_PVP_KILLS_CHANGED` event. The event may not provide the defeated player's name, so automatic totals do not guess it; the manual **Record kill** action remains as an optional correction.
+- Reads the character's lifetime honorable kill total from `GetPVPLifetimeStats()` and tracks daily and weekly honorable kill credits from Forever's `PLAYER_PVP_KILLS_CHANGED` event. The event may not provide the defeated player's name, so automatic daily/weekly tracking does not guess it; the manual **Record kill** action remains as an optional correction.
 - Shows daily, weekly, and lifetime guild top 10 rankings.
 - Automatically shares updated count snapshots with the guild when the client permits addon messaging. If a kill is credited during combat or messaging lockdown, its report is queued until combat ends and restrictions clear. **Share stats** remains available for a manual refresh.
 - Provides a guild target board for enemy player names, reward amounts, and proof requirements.
@@ -23,4 +23,4 @@ A guild PvP addon for **WoW Forever** (interface 16001). It has no external libr
 
 ## Notes
 
-Guild members need the addon enabled to exchange rankings and target changes. Rankings are personal snapshots received from each member; counts are not independently verified. Automatic counts reflect honorable kill credit, not every PvP elimination, and daily and weekly counts use the local calendar on each player's client. Target records and kill counts are saved in the addon's SavedVariables file.
+Guild members need the addon enabled to exchange rankings and target changes. Rankings are personal snapshots received from each member; counts are not independently verified. The all-time value reflects the character's lifetime honorable kills reported by the game, while daily and weekly counts reflect credits observed by the addon and use each client's local calendar. Target records and kill counts are saved in the addon's SavedVariables file.
