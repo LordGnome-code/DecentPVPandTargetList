@@ -1,7 +1,9 @@
 -- Decent PvP and Target List: WoW Forever (modern client) compatible.
 local ADDON, ns = ...
-local PREFIX = "DPTL1"
+local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
+local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
+local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
 local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", pendingStats = false }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
@@ -121,7 +123,8 @@ end
 
 local function broadcastTarget(t)
     return sendGuild(table.concat({ "T", t.id, safe(t.name, 35), safe(t.gold, 8), safe(t.silver, 4),
-        safe(t.copper, 4), safe(t.reward, 40), safe(t.proof, 40), t.created }, "|"))
+        safe(t.copper, 4), safe(t.reward, 40), safe(t.proof, 40), t.created,
+        safe(t.race, 20), safe(t.class, 20) }, "|"))
 end
 
 local root = CreateFrame("Frame")
@@ -227,8 +230,88 @@ local function selectTab(name)
     styleFrame()
 end
 
+local function dropdown(parent, title, values, x, y, width, initial, changed)
+    label(parent, title, x, y, width)
+    local menu = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
+    menu:SetPoint("TOPLEFT", parent, "TOPLEFT", x - 16, y - 18)
+    UIDropDownMenu_SetWidth(menu, width)
+    UIDropDownMenu_SetText(menu, initial or values[1])
+    UIDropDownMenu_Initialize(menu, function(self, level)
+        for _, value in ipairs(values) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = value
+            info.checked = UIDropDownMenu_GetText(menu) == value
+            info.func = function()
+                UIDropDownMenu_SetText(menu, value)
+                if changed then changed(value) end
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+    return menu
+end
+
+local function racePortrait(race)
+    local textures = {
+        Human = "achievement_character_human_male", Orc = "achievement_character_orc_male",
+        Dwarf = "achievement_character_dwarf_male", ["Night Elf"] = "achievement_character_nightelf_male",
+        Undead = "achievement_character_scourge_male", Tauren = "achievement_character_tauren_male",
+        Gnome = "achievement_character_gnome_male", Troll = "achievement_character_troll_male",
+        ["Blood Elf"] = "achievement_character_bloodelf_male", Draenei = "achievement_character_draenei_male",
+    }
+    return race and textures[race] and ("Interface\\Icons\\" .. textures[race])
+end
+
+local function addTargetPortrait(parent, target, x, y)
+    local raceIcon = parent:CreateTexture(nil, "ARTWORK")
+    raceIcon:SetSize(24, 24)
+    raceIcon:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    raceIcon:SetTexture(racePortrait(target.race) or "Interface\\Icons\\INV_Misc_QuestionMark")
+    table.insert(ui.rows, raceIcon)
+    local classIcon = parent:CreateTexture(nil, "ARTWORK")
+    classIcon:SetSize(24, 24)
+    classIcon:SetPoint("TOPLEFT", raceIcon, "TOPRIGHT", 2, 0)
+    local atlas = target.class and ("class-icon-" .. string.lower(target.class:gsub(" ", "")))
+    if atlas and classIcon.SetAtlas then classIcon:SetAtlas(atlas) end
+    if not atlas or not classIcon.SetAtlas then classIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
+    table.insert(ui.rows, classIcon)
+end
+
+local function createTargetRow(parent, target, y)
+    local rowFrame = CreateFrame("Frame", nil, parent)
+    rowFrame:SetSize(500, 44)
+    rowFrame:SetPoint("TOPLEFT", parent, "TOPLEFT", 4, y)
+    rowFrame:EnableMouse(true)
+    local raceIcon = rowFrame:CreateTexture(nil, "ARTWORK")
+    raceIcon:SetSize(28, 28); raceIcon:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", 0, -2)
+    raceIcon:SetTexture(racePortrait(target.race) or "Interface\\Icons\\INV_Misc_QuestionMark")
+    local classIcon = rowFrame:CreateTexture(nil, "ARTWORK")
+    classIcon:SetSize(28, 28); classIcon:SetPoint("TOPLEFT", raceIcon, "TOPRIGHT", 3, 0)
+    local atlas = target.class and ("class-icon-" .. string.lower(target.class:gsub(" ", "")))
+    if atlas and classIcon.SetAtlas then classIcon:SetAtlas(atlas) else classIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
+    local reward = target.reward
+    if reward == "" then reward = string.format("%sg %ss %sc", target.gold, target.silver, target.copper) end
+    local details = rowFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    details:SetPoint("TOPLEFT", classIcon, "TOPRIGHT", 7, 0)
+    details:SetWidth(385); details:SetJustifyH("LEFT")
+    details:SetText(string.format("%s (%s %s) | %s | %s\nReward: %s | Proof: %s",
+        target.name, target.race or "?", target.class or "?", date("%b %d", target.created or time()),
+        target.owner or "Unknown submitter", reward, target.proof or ""))
+    if target.owner == playerName() then
+        local remove = button(rowFrame, "Remove", 428, -8, 64, function()
+            local ok, err = sendGuild(table.concat({ "D", target.id }, "|"))
+            if not ok then info(err); return end
+            DPTL_DB.targets[targetKey(target.owner, target.id)] = nil
+            refresh()
+        end)
+        table.insert(ui.rows, remove)
+    end
+    table.insert(ui.rows, rowFrame)
+end
+
 refresh = function()
     clearRows()
+    if ui.tab ~= "targets" and ui.targetScroll then ui.targetScroll:Hide() end
     if ui.tab == "kills" then
         label(ui.body, "Guild rankings — credited honorable kills are tracked automatically.", 6, 0, 510)
         local categories = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
@@ -268,38 +351,69 @@ refresh = function()
         end)
     elseif ui.tab == "targets" then
         row("Guild targets — only the creator can remove their entries.", 0)
-        local targets, y = {}, -23
+        local targets = {}
         for _, t in pairs(DPTL_DB.targets) do table.insert(targets, t) end
         table.sort(targets, function(a, b) return (a.created or 0) > (b.created or 0) end)
-        for _, t in ipairs(targets) do
-            local reward = t.reward
-            if reward == "" then reward = string.format("%sg %ss %sc", t.gold, t.silver, t.copper) end
-            row(string.format("%s | %s | %s | Proof: %s | By: %s", t.name,
-                date("%b %d", t.created or time()), reward, t.proof, t.owner), y)
-            y = y - 24
-            if t.owner == playerName() then
-                local remove = button(ui.body, "Remove", 432, y + 22, 64, function()
-                    local ok, err = sendGuild(table.concat({ "D", t.id }, "|"))
+        local listTop = -25
+        local listBottom = -225
+        if not ui.targetScroll then
+            ui.targetScroll = CreateFrame("ScrollFrame", "DPTLTargetScroll", ui.body, "UIPanelScrollFrameTemplate")
+            ui.targetScroll:SetPoint("TOPLEFT", ui.body, "TOPLEFT", 2, listTop)
+            ui.targetScroll:SetPoint("BOTTOMRIGHT", ui.body, "BOTTOMRIGHT", -24, listBottom)
+            ui.targetContent = CreateFrame("Frame", nil, ui.targetScroll)
+            ui.targetScroll:SetScrollChild(ui.targetContent)
+        end
+        ui.targetScroll:Show()
+        for _, old in ipairs(ui.targetRows or {}) do old:Hide(); old:SetParent(nil) end
+        ui.targetRows = {}
+        for index, target in ipairs(targets) do
+            local y = -((index - 1) * 48)
+            local rowFrame = CreateFrame("Frame", nil, ui.targetContent)
+            rowFrame:SetSize(500, 44); rowFrame:SetPoint("TOPLEFT", ui.targetContent, "TOPLEFT", 0, y)
+            local raceIcon = rowFrame:CreateTexture(nil, "ARTWORK")
+            raceIcon:SetSize(28, 28); raceIcon:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", 0, -2)
+            raceIcon:SetTexture(racePortrait(target.race) or "Interface\\Icons\\INV_Misc_QuestionMark")
+            local classIcon = rowFrame:CreateTexture(nil, "ARTWORK")
+            classIcon:SetSize(28, 28); classIcon:SetPoint("TOPLEFT", raceIcon, "TOPRIGHT", 3, 0)
+            local atlas = target.class and ("class-icon-" .. string.lower(target.class:gsub(" ", "")))
+            if atlas and classIcon.SetAtlas then classIcon:SetAtlas(atlas) else classIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
+            local reward = target.reward
+            if reward == "" then reward = string.format("%sg %ss %sc", target.gold, target.silver, target.copper) end
+            local details = rowFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            details:SetPoint("TOPLEFT", classIcon, "TOPRIGHT", 7, 0)
+            details:SetWidth(325); details:SetJustifyH("LEFT")
+            details:SetText(string.format("%s (%s %s) | %s\nSubmitted by %s | Reward: %s | Proof: %s",
+                target.name, target.race or "?", target.class or "?", date("%b %d", target.created or time()),
+                target.owner or "Unknown", reward, target.proof or ""))
+            if target.owner == playerName() then
+                local remove = button(rowFrame, "Remove", 402, -8, 64, function()
+                    local ok, err = sendGuild(table.concat({ "D", target.id }, "|"))
                     if not ok then info(err); return end
-                    DPTL_DB.targets[targetKey(t.owner, t.id)] = nil
+                    DPTL_DB.targets[targetKey(target.owner, target.id)] = nil
                     refresh()
                 end)
-                table.insert(ui.rows, remove)
+                table.insert(ui.targetRows, remove)
             end
-            y = y - 5
+            table.insert(ui.targetRows, rowFrame)
         end
+        ui.targetContent:SetSize(500, math.max(1, #targets * 48))
+        ui.targetScroll:SetVerticalScroll(0)
+        local y = -235
         if not guildReady() then row("Join a guild to share targets and rankings.", y); y = y - 24 end
         if ownedTargetCount(playerName()) >= MAX_TARGETS then
             row("You have reached the limit of 3 active targets.", y)
         else
             label(ui.body, "Create target", 6, y, 100); y = y - 22
             ui.enemy = edit(ui.body, "Enemy player", 6, y, 130)
-            ui.gold = edit(ui.body, "Gold", 146, y, 48)
-            ui.silver = edit(ui.body, "Silver", 202, y, 48)
-            ui.copper = edit(ui.body, "Copper", 258, y, 48)
-            ui.reward = edit(ui.body, "Or reward text", 314, y, 100)
-            ui.proof = edit(ui.body, "Proof required", 422, y, 100)
-            button(ui.body, "Create", 6, y - 52, 90, function()
+            ui.targetRace = dropdown(ui.body, "Race", RACES, 148, y, 130, RACES[1])
+            ui.targetClass = dropdown(ui.body, "Class", CLASSES, 292, y, 130, CLASSES[1])
+            local fieldsY = y - 58
+            ui.gold = edit(ui.body, "Gold", 6, fieldsY, 48)
+            ui.silver = edit(ui.body, "Silver", 62, fieldsY, 48)
+            ui.copper = edit(ui.body, "Copper", 118, fieldsY, 48)
+            ui.reward = edit(ui.body, "Or reward text", 174, fieldsY, 145)
+            ui.proof = edit(ui.body, "Proof required", 328, fieldsY, 150)
+            button(ui.body, "Create", 6, fieldsY - 52, 90, function()
                 local name = safe(ui.enemy:GetText(), 35)
                 local gold, silver, copper = safe(ui.gold:GetText(), 8), safe(ui.silver:GetText(), 4), safe(ui.copper:GetText(), 4)
                 local reward, proof = safe(ui.reward:GetText(), 40), safe(ui.proof:GetText(), 40)
@@ -314,8 +428,9 @@ refresh = function()
                 end
                 local id = DPTL_DB.nextId
                 DPTL_DB.nextId = id + 1
-                local t = { id = id, owner = playerName(), name = name, gold = gold, silver = silver,
-                    copper = copper, reward = reward, proof = proof, created = time() }
+                local t = { id = id, owner = playerName(), name = name,
+                    race = UIDropDownMenu_GetText(ui.targetRace), class = UIDropDownMenu_GetText(ui.targetClass),
+                    gold = gold, silver = silver, copper = copper, reward = reward, proof = proof, created = time() }
                 local ok, err = broadcastTarget(t)
                 if not ok then info(err); return end
                 DPTL_DB.targets[targetKey(t.owner, id)] = t
@@ -323,6 +438,7 @@ refresh = function()
             end)
         end
     else
+        if ui.targetScroll then ui.targetScroll:Hide() end
         row("Choose a window appearance:", 0)
         button(ui.body, "Normal layout", 6, -30, 115, function()
             DPTL_DB.layout = "normal"; styleFrame()
@@ -336,6 +452,9 @@ refresh = function()
         end)
         row("Honorable kill credit is detected automatically; victim names may not be provided by Forever.", -108)
         row("Guild reports are shared automatically when addon messaging is allowed, after combat if needed.", -132)
+    end
+    if ui.settingsButton then
+        ui.settingsButton:SetText(ui.tab == "settings" and "Close Settings" or "Settings")
     end
 end
 
@@ -357,7 +476,12 @@ local function buildUI()
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -3, -3)
     local settingsButton = button(f, "Settings", 468, -12, 82, function()
-        if ui.tab == "settings" then selectTab(ui.previousTab or "kills") else selectTab("settings") end
+        if ui.tab == "settings" then
+            selectTab(ui.previousTab or "kills")
+        else
+            ui.previousTab = ui.tab
+            selectTab("settings")
+        end
     end)
     ui.settingsButton = settingsButton
     ui.tabs = {}
@@ -402,11 +526,12 @@ local function onAddonMessage(prefix, message, channel, sender)
         rec.total = toNumber(p[6]); rec.receivedAt = time()
         DPTL_DB.kills[sender] = rec
         if ui.tab == "kills" then refresh() end
-    elseif p[1] == "T" and #p >= 9 then
+    elseif p[1] == "T" and #p >= 11 then
         local id = tonumber(p[2])
         if id and ownedTargetCount(sender) < MAX_TARGETS then
             local t = { id = id, owner = sender, name = p[3], gold = p[4], silver = p[5],
-                copper = p[6], reward = p[7], proof = p[8], created = tonumber(p[9]) or time() }
+                copper = p[6], reward = p[7], proof = p[8], created = tonumber(p[9]) or time(),
+                race = p[10], class = p[11] }
             DPTL_DB.targets[targetKey(sender, id)] = t
             if ui.tab == "targets" then refresh() end
         end
