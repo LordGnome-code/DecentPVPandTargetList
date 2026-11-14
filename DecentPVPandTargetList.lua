@@ -3,6 +3,10 @@ local ADDON, ns = ...
 local PREFIX = "DPTL1"
 local MAX_TARGETS = 3
 local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal" }
+local factionThemes = {
+    Horde = { 0.82, 0.16, 0.19 },
+    Alliance = { 0.16, 0.42, 0.88 },
+}
 
 local function fillDefaults(dst, src)
     for k, v in pairs(src) do
@@ -134,21 +138,67 @@ local function edit(parent, title, x, y, width)
     return box
 end
 
+local refresh
 local function styleFrame()
     if not ui.frame then return end
-    if DPTL_DB.layout == "blizzlike" then
-        ui.frame:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    local faction = UnitFactionGroup and UnitFactionGroup("player") or "Alliance"
+    local accent = factionThemes[faction] or factionThemes.Alliance
+    local blizzard = DPTL_DB.layout == "blizzlike"
+    if blizzard then
+        ui.frame:SetBackdrop({ bgFile = "Interface\\FrameGeneral\\UI-Background-Rock",
             edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true,
-            tileSize = 32, edgeSize = 32, insets = { left = 11, right = 12, top = 12, bottom = 11 } })
-    else
-        ui.frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            tileSize = 64, edgeSize = 32, insets = { left = 8, right = 8, top = 8, bottom = 8 } })
+        ui.frame:SetBackdropColor(1, 1, 1, 1)
+        ui.frame:SetBackdropBorderColor(1, 1, 1, 1)
+        ui.inset:SetBackdrop({ bgFile = "Interface\\FrameGeneral\\UI-Background-Marble",
             edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true,
-            tileSize = 16, edgeSize = 16, insets = { left = 4, right = 4, top = 4, bottom = 4 } })
-        ui.frame:SetBackdropColor(0.035, 0.055, 0.08, 0.97)
+            tileSize = 64, edgeSize = 16, insets = { left = 4, right = 4, top = 4, bottom = 4 } })
+        ui.inset:SetBackdropColor(1, 1, 1, 1)
+        ui.inset:SetBackdropBorderColor(0.72, 0.72, 0.72, 1)
+        ui.headerArt:Show()
+        ui.title:SetTextColor(1, 0.82, 0)
+    else
+        ui.frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+        ui.frame:SetBackdropColor(accent[1] * 0.15 + 0.025, accent[2] * 0.15 + 0.025,
+            accent[3] * 0.15 + 0.025, 0.97)
+        ui.frame:SetBackdropBorderColor(accent[1], accent[2], accent[3], 1)
+        ui.inset:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        ui.inset:SetBackdropColor(accent[1] * 0.09 + 0.025, accent[2] * 0.09 + 0.025,
+            accent[3] * 0.09 + 0.025, 0.98)
+        ui.inset:SetBackdropBorderColor(accent[1], accent[2], accent[3], 0.8)
+        ui.headerArt:Hide()
+        ui.title:SetTextColor(0.96, 0.9, 0.82)
+    end
+    for name, tab in pairs(ui.tabs or {}) do
+        local active = name == ui.tab
+        if blizzard then
+            tab:SetBackdrop(nil)
+            tab.text:SetTextColor(1, active and 1 or 0.78, active and 1 or 0.5)
+            tab.active:SetShown(active)
+        else
+            tab:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
+                edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+            tab:SetBackdropColor(active and accent[1] * 0.22 + 0.04 or 0.035,
+                active and accent[2] * 0.22 + 0.04 or 0.035,
+                active and accent[3] * 0.22 + 0.04 or 0.04, 1)
+            tab:SetBackdropBorderColor(active and accent[1] or 0.25,
+                active and accent[2] or 0.25, active and accent[3] or 0.28, 1)
+            tab.text:SetTextColor(active and 1 or 0.7, active and 0.92 or 0.7, active and 0.72 or 0.7)
+            tab.active:SetShown(false)
+        end
     end
 end
 
-local function refresh()
+local function selectTab(name)
+    if name ~= "settings" then ui.previousTab = name end
+    ui.tab = name
+    refresh()
+    styleFrame()
+end
+
+refresh = function()
     clearRows()
     if ui.tab == "kills" then
         label(ui.body, "Guild rankings — players share snapshots manually, after combat.", 6, 0, 510)
@@ -263,22 +313,52 @@ end
 local function buildUI()
     if ui.frame then return end
     local f = CreateFrame("Frame", "DPTLMainFrame", UIParent, "BackdropTemplate")
-    ui.frame = f; f:SetSize(560, 430); f:SetPoint("CENTER"); f:SetMovable(true)
+    ui.frame = f; f:SetSize(590, 480); f:SetPoint("CENTER"); f:SetMovable(true)
     f:EnableMouse(true); f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
     f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
-    f:Hide(); styleFrame()
+    f:Hide()
+    ui.headerArt = f:CreateTexture(nil, "BACKGROUND")
+    ui.headerArt:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Header")
+    ui.headerArt:SetSize(300, 64)
+    ui.headerArt:SetPoint("TOP", f, "TOP", 0, 12)
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -14); title:SetText("Decent PvP & Target List")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 20, -17); title:SetText("DECENT PVP & TARGET LIST")
+    ui.title = title
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -3, -3)
-    button(f, "Kill Rankings", 16, -40, 110, function() ui.tab = "kills"; refresh() end)
-    button(f, "Guild Targets", 132, -40, 110, function() ui.tab = "targets"; refresh() end)
-    button(f, "Settings", 248, -40, 90, function() ui.tab = "settings"; refresh() end)
+    local settingsButton = button(f, "Settings", 468, -12, 82, function()
+        if ui.tab == "settings" then selectTab(ui.previousTab or "kills") else selectTab("settings") end
+    end)
+    ui.settingsButton = settingsButton
+    ui.tabs = {}
+    for i, tabName in ipairs({ "kills", "targets" }) do
+        local displayName = tabName == "kills" and "Kill Rankings" or "Guild Targets"
+        local tab = CreateFrame("Button", nil, f, "BackdropTemplate")
+        tab:SetSize(150, 30)
+        tab:SetPoint("TOPLEFT", f, "TOPLEFT", 20 + (i - 1) * 156, -51)
+        tab:SetFrameLevel(f:GetFrameLevel() + 2)
+        tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        tab.text:SetPoint("CENTER")
+        tab.text:SetText(displayName)
+        tab:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+        tab:GetHighlightTexture():SetAlpha(0.06)
+        tab.active = tab:CreateTexture(nil, "OVERLAY")
+        tab.active:SetColorTexture(1, 1, 1, 0.9)
+        tab.active:SetPoint("BOTTOMLEFT", tab, "BOTTOMLEFT", 2, 1)
+        tab.active:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", -2, 1)
+        tab.active:SetHeight(2)
+        tab:SetScript("OnClick", function() selectTab(tabName) end)
+        ui.tabs[tabName] = tab
+    end
     ui.body = CreateFrame("Frame", nil, f)
-    ui.body:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -72)
-    ui.body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -16, 14)
+    ui.inset = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    ui.inset:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -87)
+    ui.inset:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 12)
+    ui.body:SetPoint("TOPLEFT", ui.inset, "TOPLEFT", 10, -10)
+    ui.body:SetPoint("BOTTOMRIGHT", ui.inset, "BOTTOMRIGHT", -10, 10)
     refresh()
+    styleFrame()
 end
 
 local function onAddonMessage(prefix, message, channel, sender)
