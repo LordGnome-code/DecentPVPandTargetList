@@ -1,7 +1,6 @@
--- Decent PvP and Target List: WoW Forever / Wrath-era API compatible.
+-- Decent PvP and Target List: WoW Forever (modern client) compatible.
 local ADDON, ns = ...
 local PREFIX = "DPTL1"
-local SYNC_SECONDS = 300
 local MAX_TARGETS = 3
 local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal" }
 
@@ -24,7 +23,25 @@ local function safe(s, max)
 end
 local function guildReady() return IsInGuild and IsInGuild() end
 local function sendGuild(msg)
-    if guildReady() and SendAddonMessage then SendAddonMessage(PREFIX, msg, "GUILD") end
+    if not guildReady() then return false, "Join a guild first." end
+    if not C_ChatInfo or not C_ChatInfo.SendAddonMessage then
+        return false, "This client does not expose guild addon messaging."
+    end
+    if C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown() then
+        return false, "The game currently restricts addon messages. Try again later or outside this instance."
+    end
+    if C_ChatInfo.AreOutgoingAddonChatMessagesRestricted
+        and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted() then
+        return false, "This realm currently restricts outgoing addon messages."
+    end
+    -- All sends are reached from an explicit user click, never from combat or a timer.
+    local called, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "GUILD")
+    if not called then return false, "The client blocked guild sharing." end
+    if Enum and Enum.SendAddonMessageResult and result
+        and result ~= Enum.SendAddonMessageResult.Success then
+        return false, "The game did not accept the guild message (result " .. tostring(result) .. ")."
+    end
+    return true
 end
 local function split(msg)
     local out = {}
@@ -36,7 +53,7 @@ local function toNumber(value) return tonumber(value) or 0 end
 local function ownStats()
     local name = playerName()
     if not DPTL_DB.kills[name] then
-        DPTL_DB.kills[name] = { total = 0, daily = {}, weekly = {}, sentAt = 0 }
+        DPTL_DB.kills[name] = { total = 0, daily = {}, weekly = {} }
     end
     return DPTL_DB.kills[name]
 end
@@ -46,17 +63,13 @@ local function counts(rec)
         toNumber(rec.weekly and rec.weekly[thisWeek()]), toNumber(rec.total)
 end
 
-local function syncStats(force)
-    if not guildReady() then return end
-    local rec, now = ownStats(), time()
-    if force or now - (rec.sentAt or 0) >= SYNC_SECONDS then
-        local d, w, a = counts(rec)
-        sendGuild(table.concat({ "S", today(), thisWeek(), d, w, a }, "|"))
-        rec.sentAt = now
-    end
+local function shareStats()
+    local rec = ownStats()
+    local d, w, a = counts(rec)
+    return sendGuild(table.concat({ "S", today(), thisWeek(), d, w, a }, "|"))
 end
 
-local function recordKill()
+local function recordKill(victim)
     local rec = ownStats()
     local d, w = today(), thisWeek()
     rec.total = toNumber(rec.total) + 1
@@ -64,7 +77,8 @@ local function recordKill()
     rec.weekly[w] = toNumber(rec.weekly[w]) + 1
     for key in pairs(rec.daily) do if key ~= d then rec.daily[key] = nil end end
     for key in pairs(rec.weekly) do if key ~= w then rec.weekly[key] = nil end end
-    rec.sentAt = 0
+    rec.lastVictim = safe(victim, 35)
+    rec.lastKill = time()
 end
 
 local function targetKey(owner, id) return owner .. ":" .. tostring(id) end
@@ -75,7 +89,7 @@ local function ownedTargetCount(owner)
 end
 
 local function broadcastTarget(t)
-    sendGuild(table.concat({ "T", t.id, safe(t.name, 35), safe(t.gold, 8), safe(t.silver, 4),
+    return sendGuild(table.concat({ "T", t.id, safe(t.name, 35), safe(t.gold, 8), safe(t.silver, 4),
         safe(t.copper, 4), safe(t.reward, 40), safe(t.proof, 40), t.created }, "|"))
 end
 
@@ -83,7 +97,6 @@ local root = CreateFrame("Frame")
 root:RegisterEvent("ADDON_LOADED")
 root:RegisterEvent("PLAYER_LOGIN")
 root:RegisterEvent("CHAT_MSG_ADDON")
-root:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 
 local ui = { rows = {}, tab = "kills" }
 local function info(text)
@@ -138,7 +151,7 @@ end
 local function refresh()
     clearRows()
     if ui.tab == "kills" then
-        label(ui.body, "Guild rankings — members share snapshots every five minutes.", 6, 0, 510)
+        label(ui.body, "Guild rankings — players share snapshots manually, after combat.", 6, 0, 510)
         local categories = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
         for column, category in ipairs(categories) do
             local x = 6 + (column - 1) * 174
@@ -159,6 +172,21 @@ local function refresh()
                 table.insert(ui.rows, entry)
             end
         end
+        label(ui.body, "Record a kill after combat (manual entry; no combat event reading).", 6, -286, 510)
+        ui.victimBox = edit(ui.body, "Defeated player (optional)", 6, -307, 175)
+        button(ui.body, "Record kill", 195, -307, 96, function()
+            if InCombatLockdown and InCombatLockdown() then
+                info("Record kills after combat ends."); return
+            end
+            recordKill(ui.victimBox:GetText())
+            local ok, err = shareStats()
+            refresh()
+            if ok then info("Kill recorded and guild stats shared.") else info("Kill recorded locally. " .. err) end
+        end)
+        button(ui.body, "Share stats", 302, -307, 96, function()
+            local ok, err = shareStats()
+            if ok then info("Guild stats shared.") else info(err) end
+        end)
     elseif ui.tab == "targets" then
         row("Guild targets — only the creator can remove their entries.", 0)
         local targets, y = {}, -23
@@ -172,8 +200,9 @@ local function refresh()
             y = y - 24
             if t.owner == playerName() then
                 local remove = button(ui.body, "Remove", 432, y + 22, 64, function()
+                    local ok, err = sendGuild(table.concat({ "D", t.id }, "|"))
+                    if not ok then info(err); return end
                     DPTL_DB.targets[targetKey(t.owner, t.id)] = nil
-                    sendGuild(table.concat({ "D", t.id }, "|"))
                     refresh()
                 end)
                 table.insert(ui.rows, remove)
@@ -208,8 +237,10 @@ local function refresh()
                 DPTL_DB.nextId = id + 1
                 local t = { id = id, owner = playerName(), name = name, gold = gold, silver = silver,
                     copper = copper, reward = reward, proof = proof, created = time() }
+                local ok, err = broadcastTarget(t)
+                if not ok then info(err); return end
                 DPTL_DB.targets[targetKey(t.owner, id)] = t
-                broadcastTarget(t); refresh()
+                refresh()
             end)
         end
     else
@@ -220,11 +251,12 @@ local function refresh()
         button(ui.body, "Blizzard-like", 130, -30, 115, function()
             DPTL_DB.layout = "blizzlike"; styleFrame()
         end)
-        button(ui.body, "Sync now", 6, -68, 90, function()
-            syncStats(true); info("Guild stats sent.")
+        button(ui.body, "Share stats", 6, -68, 100, function()
+            local ok, err = shareStats()
+            if ok then info("Guild stats shared.") else info(err) end
         end)
-        row("PvP kills are counted from combat log hostile player deaths caused by you.", -108)
-        row("Guild data syncs only while logged in and in a guild.", -132)
+        row("Combat-log kill reading and automatic combat-time messaging are disabled for Forever.", -108)
+        row("Add your kills manually after combat; Share stats sends your current totals.", -132)
     end
 end
 
@@ -288,33 +320,17 @@ root:SetScript("OnEvent", function(self, event, ...)
         fillDefaults(DPTL_DB, DB_DEFAULTS)
         ownStats()
     elseif event == "PLAYER_LOGIN" then
-        if RegisterAddonMessagePrefix then RegisterAddonMessagePrefix(PREFIX) end
+        if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+            C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
+        end
         buildUI()
         SLASH_DPTL1 = "/dptl"
         SLASH_DPTL2 = "/targetlist"
         SlashCmdList.DPTL = function()
             if ui.frame:IsShown() then ui.frame:Hide() else refresh(); ui.frame:Show() end
         end
-        syncStats(true)
-        self.elapsed = 0
-        self:SetScript("OnUpdate", function(frame, elapsed)
-            frame.elapsed = frame.elapsed + elapsed
-            if frame.elapsed >= 30 then frame.elapsed = 0; syncStats(false) end
-        end)
     elseif event == "CHAT_MSG_ADDON" then
         onAddonMessage(...)
-    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        -- Wrath 3.3.5 combat-log payload: timestamp, event, source GUID/name/flags,
-        -- then destination GUID/name/flags (Retail adds fields this client lacks).
-        local _, subevent, sourceGUID, _, _, _, destName, destFlags = ...
-        if subevent == "UNIT_DIED" and sourceGUID == UnitGUID("player") and destName
-            and bit and bit.band(destFlags or 0, 0x00000400) ~= 0
-            and bit.band(destFlags or 0, 0x00000100) ~= 0
-            and bit.band(destFlags or 0, 0x00000040) ~= 0 then
-            recordKill()
-            if ui.tab == "kills" then refresh() end
-            syncStats(false)
-        end
     end
 end)
 

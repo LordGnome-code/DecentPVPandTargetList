@@ -1,6 +1,6 @@
 # Decent PvP and Target List
 
-A guild PvP addon for **WoW Forever**, written for the Wrath-era 3.3.5 interface. It has no external library dependencies.
+A guild PvP addon for **WoW Forever** (interface 16001). It has no external library dependencies.
 
 ## Install
 
@@ -11,9 +11,9 @@ A guild PvP addon for **WoW Forever**, written for the Wrath-era 3.3.5 interface
 
 ## Features
 
-- Counts hostile player kills caused by your character from the combat log.
+- Tracks daily, weekly, and lifetime kills with a manual **Record kill** action after combat. Forever restricts combat-event access, so the addon does not inspect combat logs.
 - Shows daily, weekly, and lifetime guild top 10 rankings.
-- Shares each player's own count snapshot with guild members every five minutes, and when a new kill is recorded. It does not poll or transmit every few seconds.
+- Shares each player's own count snapshot only when they click **Share stats** or **Record kill**, and only when the client reports addon messaging is allowed. It does not send on a timer or from combat events.
 - Provides a guild target board for enemy player names, reward amounts, and proof requirements.
 - Rewards can be entered as gold, silver, and copper or as free-form text.
 - Each character can maintain up to three active targets; only the character that created a target can remove it.
@@ -22,4 +22,4 @@ A guild PvP addon for **WoW Forever**, written for the Wrath-era 3.3.5 interface
 
 ## Notes
 
-Guild members need the addon enabled for their kills and target changes to be shared. Rankings are personal snapshots received from each member; the addon does not claim that snapshots are independently verified. Daily and weekly counts use the local calendar on each player's client. Target records and kill counts are saved in `WTF/Account/<account>/SavedVariables/DecentPVPandTargetList.lua`.
+Guild members need the addon enabled and must click a sharing action for their stats and target changes to be shared. Rankings are personal snapshots received from each member; counts are self-reported and not independently verified. Daily and weekly counts use the local calendar on each player's client. Target records and kill counts are saved in the addon's SavedVariables file.
