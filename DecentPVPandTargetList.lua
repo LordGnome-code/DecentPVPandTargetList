@@ -4,7 +4,7 @@ local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
 local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
-local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", pendingStats = false, pendingTargets = {} }
+local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", pendingStats = false, pendingTargets = {}, windowWidth = 590, windowHeight = 480 }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
     Alliance = { 0.16, 0.42, 0.88 },
@@ -19,7 +19,24 @@ local function fillDefaults(dst, src)
     end
 end
 
-local function playerName() return UnitName("player") or "Unknown" end
+local function playerName()
+    local first, last
+    if UnitFullName then first, last = UnitFullName("player") end
+    local realm = GetRealmName and GetRealmName()
+    if first and last and last ~= "" and last ~= realm then
+        return first .. " " .. last
+    end
+    return UnitName("player") or first or "Unknown"
+end
+
+local function isPlayerSender(sender)
+    if type(sender) ~= "string" then return false end
+    local short = UnitName("player")
+    local full = playerName()
+    if sender == short or sender == full then return true end
+    local withoutRealm = string.gsub(sender, "%-.*$", "")
+    return withoutRealm == short or withoutRealm == full
+end
 local function today() return date("%Y%m%d") end
 local function thisWeek() return date("%Y%W") end
 local function safe(s, max)
@@ -134,6 +151,45 @@ local function recordKill(victim)
 end
 
 local function targetKey(owner, id) return owner .. ":" .. tostring(id) end
+
+local function migratePlayerIdentity()
+    local short, full = UnitName("player"), playerName()
+    if not short or not full or short == full then return end
+
+    local oldRec = DPTL_DB.kills[short]
+    if oldRec then
+        local current = DPTL_DB.kills[full]
+        if not current then
+            DPTL_DB.kills[full] = oldRec
+        else
+            current.daily, current.weekly = current.daily or {}, current.weekly or {}
+            for key, value in pairs(oldRec.daily or {}) do
+                if toNumber(value) > toNumber(current.daily[key]) then current.daily[key] = value end
+            end
+            for key, value in pairs(oldRec.weekly or {}) do
+                if toNumber(value) > toNumber(current.weekly[key]) then current.weekly[key] = value end
+            end
+            current.total = math.max(toNumber(current.total), toNumber(oldRec.total))
+            if oldRec.lifetime ~= nil then
+                current.lifetime = math.max(toNumber(current.lifetime), toNumber(oldRec.lifetime))
+            end
+            if toNumber(oldRec.lastKill) > toNumber(current.lastKill) then
+                current.lastKill, current.lastVictim = oldRec.lastKill, oldRec.lastVictim
+            end
+        end
+        DPTL_DB.kills[short] = nil
+    end
+
+    local targets, pending = {}, {}
+    for oldKey, target in pairs(DPTL_DB.targets) do
+        if target.owner == short then target.owner = full end
+        local key = targetKey(target.owner, target.id)
+        if not targets[key] then targets[key] = target end
+        if DPTL_DB.pendingTargets[oldKey] then pending[key] = true end
+    end
+    DPTL_DB.targets, DPTL_DB.pendingTargets = targets, pending
+end
+
 local function ownedTargetCount(owner)
     local count = 0
     for _, t in pairs(DPTL_DB.targets) do if t.owner == owner then count = count + 1 end end
@@ -302,13 +358,16 @@ end
 
 refresh = function()
     clearRows()
+    local bodyWidth = math.max(546, ui.body:GetWidth())
+    local bodyHeight = math.max(361, ui.body:GetHeight())
     if ui.tab ~= "targets" and ui.targetScroll then ui.targetScroll:Hide() end
     if ui.tab == "kills" then
-        label(ui.body, "Guild rankings — credited honorable kills are tracked automatically.", 6, 0, 510)
+        label(ui.body, "Guild rankings — credited honorable kills are tracked automatically.", 6, 0, bodyWidth - 12)
         local categories = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
+        local columnWidth = (bodyWidth - 12) / 3
         for column, category in ipairs(categories) do
-            local x = 6 + (column - 1) * 174
-            local header = label(ui.body, category[1] .. " top 10", x, -26, 166)
+            local x = 6 + (column - 1) * columnWidth
+            local header = label(ui.body, category[1] .. " top 10", x, -26, columnWidth - 8)
             local list = {}
             for name, rec in pairs(DPTL_DB.kills) do
                 local d, w, a = counts(rec)
@@ -319,13 +378,14 @@ refresh = function()
                 return a.value > b.value
             end)
             for i = 1, math.min(10, #list) do
-                local entry = label(ui.body, string.format("%2d. %-16s %d", i,
-                    string.sub(list[i].name, 1, 16), list[i].value), x, -48 - (i - 1) * 23, 166)
+                label(ui.body, string.format("%2d. %-16s %d", i,
+                    string.sub(list[i].name, 1, 16), list[i].value), x, -48 - (i - 1) * 23, columnWidth - 8)
             end
         end
-        label(ui.body, "Add a missed kill manually (optional victim name).", 6, -286, 510)
-        ui.victimBox = edit(ui.body, "Defeated player (optional)", 6, -307, 175)
-        button(ui.body, "Record kill", 195, -307, 96, function()
+        local toolsY = -bodyHeight + 75
+        label(ui.body, "Add a missed kill manually (optional victim name).", 6, toolsY, bodyWidth - 12)
+        ui.victimBox = edit(ui.body, "Defeated player (optional)", 6, toolsY - 21, 175)
+        button(ui.body, "Record kill", 195, toolsY - 21, 96, function()
             if InCombatLockdown and InCombatLockdown() then
                 info("Record kills after combat ends."); return
             end
@@ -334,7 +394,7 @@ refresh = function()
             refresh()
             if ok then info("Kill recorded and guild stats shared.") else info("Kill recorded locally. " .. err) end
         end)
-        button(ui.body, "Share stats", 302, -307, 96, function()
+        button(ui.body, "Share stats", 302, toolsY - 21, 96, function()
             local ok, err = shareStats()
             if ok then info("Guild stats shared.") else info(err) end
         end)
@@ -344,21 +404,23 @@ refresh = function()
         for _, t in pairs(DPTL_DB.targets) do table.insert(targets, t) end
         table.sort(targets, function(a, b) return (a.created or 0) > (b.created or 0) end)
         local listTop = -25
-        local listBottom = -140
+        local formTop = -bodyHeight + 211
+        local contentWidth = math.max(470, bodyWidth - 40)
         if not ui.targetScroll then
             ui.targetScroll = CreateFrame("ScrollFrame", "DPTLTargetScroll", ui.body, "UIPanelScrollFrameTemplate")
-            ui.targetScroll:SetPoint("TOPLEFT", ui.body, "TOPLEFT", 2, listTop)
-            ui.targetScroll:SetPoint("BOTTOMRIGHT", ui.body, "BOTTOMRIGHT", -24, listBottom)
             ui.targetContent = CreateFrame("Frame", nil, ui.targetScroll)
             ui.targetScroll:SetScrollChild(ui.targetContent)
         end
+        ui.targetScroll:ClearAllPoints()
+        ui.targetScroll:SetPoint("TOPLEFT", ui.body, "TOPLEFT", 2, listTop)
+        ui.targetScroll:SetPoint("BOTTOMRIGHT", ui.body, "TOPRIGHT", -24, formTop - 10)
         ui.targetScroll:Show()
         for _, old in ipairs(ui.targetRows or {}) do old:Hide(); old:SetParent(nil) end
         ui.targetRows = {}
         for index, target in ipairs(targets) do
             local y = -((index - 1) * 48)
             local rowFrame = CreateFrame("Frame", nil, ui.targetContent)
-            rowFrame:SetSize(500, 44); rowFrame:SetPoint("TOPLEFT", ui.targetContent, "TOPLEFT", 0, y)
+            rowFrame:SetSize(contentWidth, 44); rowFrame:SetPoint("TOPLEFT", ui.targetContent, "TOPLEFT", 0, y)
             local raceIcon = rowFrame:CreateTexture(nil, "ARTWORK")
             raceIcon:SetSize(28, 28); raceIcon:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", 0, -2)
             raceIcon:SetTexture(racePortrait(target.race) or "Interface\\Icons\\INV_Misc_QuestionMark")
@@ -370,12 +432,12 @@ refresh = function()
             if reward == "" then reward = string.format("%sg %ss %sc", target.gold, target.silver, target.copper) end
             local details = rowFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
             details:SetPoint("TOPLEFT", classIcon, "TOPRIGHT", 7, 0)
-            details:SetWidth(325); details:SetJustifyH("LEFT")
+            details:SetWidth(contentWidth - 154); details:SetJustifyH("LEFT")
             details:SetText(string.format("%s (%s %s) | %s\nSubmitted by %s | Reward: %s | Proof: %s",
                 target.name, target.race or "?", target.class or "?", date("%b %d", target.created or time()),
                 target.owner or "Unknown", reward, target.proof or ""))
             if target.owner == playerName() then
-                local remove = button(rowFrame, "Remove", 402, -8, 64, function()
+                local remove = button(rowFrame, "Remove", contentWidth - 72, -8, 64, function()
                     local key = targetKey(target.owner, target.id)
                     if DPTL_DB.pendingTargets[key] then
                         DPTL_DB.pendingTargets[key] = nil
@@ -392,9 +454,9 @@ refresh = function()
             end
             table.insert(ui.targetRows, rowFrame)
         end
-        ui.targetContent:SetSize(500, math.max(1, #targets * 48))
+        ui.targetContent:SetSize(contentWidth, math.max(1, #targets * 48))
         ui.targetScroll:SetVerticalScroll(0)
-        local y = -150
+        local y = formTop
         if not guildReady() then row("Join a guild to share targets and rankings.", y); y = y - 24 end
         if ownedTargetCount(playerName()) >= MAX_TARGETS then
             row("You have reached the limit of 3 active targets.", y)
@@ -457,14 +519,20 @@ refresh = function()
         row("Guild reports are shared automatically when addon messaging is allowed, after combat if needed.", -132)
     end
     if ui.settingsButton then
-        ui.settingsButton:SetText(ui.tab == "settings" and "Close Settings" or "Settings")
+        ui.settingsButton:SetAlpha(ui.tab == "settings" and 1 or 0.82)
     end
 end
 
 local function buildUI()
     if ui.frame then return end
     local f = CreateFrame("Frame", "DPTLMainFrame", UIParent, "BackdropTemplate")
-    ui.frame = f; f:SetSize(590, 480); f:SetPoint("CENTER"); f:SetMovable(true)
+    ui.frame = f
+    local savedWidth = math.max(590, math.min(1100, tonumber(DPTL_DB.windowWidth) or 590))
+    local savedHeight = math.max(480, math.min(900, tonumber(DPTL_DB.windowHeight) or 480))
+    f:SetSize(savedWidth, savedHeight); f:SetPoint("CENTER"); f:SetMovable(true); f:SetResizable(true)
+    if f.SetResizeBounds then f:SetResizeBounds(590, 480, 1100, 900)
+    else f:SetMinResize(590, 480); f:SetMaxResize(1100, 900) end
+    f:SetClampedToScreen(true)
     f:EnableMouse(true); f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
     f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
@@ -478,7 +546,13 @@ local function buildUI()
     ui.title = title
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -3, -3)
-    local settingsButton = button(f, "Settings", 468, -12, 82, function()
+    local settingsButton = CreateFrame("Button", nil, f)
+    settingsButton:SetSize(24, 24)
+    settingsButton:SetPoint("RIGHT", close, "LEFT", -2, 0)
+    settingsButton:SetFrameLevel(f:GetFrameLevel() + 5)
+    settingsButton:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+    settingsButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    settingsButton:SetScript("OnClick", function()
         if ui.tab == "settings" then
             selectTab(ui.previousTab or "kills")
         else
@@ -486,6 +560,12 @@ local function buildUI()
             selectTab("settings")
         end
     end)
+    settingsButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:SetText("Settings")
+        GameTooltip:Show()
+    end)
+    settingsButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
     ui.settingsButton = settingsButton
     ui.tabs = {}
     for i, tabName in ipairs({ "kills", "targets" }) do
@@ -513,14 +593,31 @@ local function buildUI()
     ui.inset:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 12)
     ui.body:SetPoint("TOPLEFT", ui.inset, "TOPLEFT", 10, -10)
     ui.body:SetPoint("BOTTOMRIGHT", ui.inset, "BOTTOMRIGHT", -10, 10)
+    local resizeGrip = CreateFrame("Button", nil, f)
+    resizeGrip:SetSize(16, 16)
+    resizeGrip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -5, 5)
+    resizeGrip:SetFrameLevel(f:GetFrameLevel() + 10)
+    resizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    resizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    resizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    resizeGrip:SetScript("OnMouseDown", function(_, mouseButton)
+        if mouseButton == "LeftButton" then f:StartSizing("BOTTOMRIGHT") end
+    end)
+    resizeGrip:SetScript("OnMouseUp", function()
+        f:StopMovingOrSizing()
+        local width, height = f:GetSize()
+        DPTL_DB.windowWidth, DPTL_DB.windowHeight = math.floor(width + 0.5), math.floor(height + 0.5)
+        refresh()
+    end)
+    ui.resizeGrip = resizeGrip
     refresh()
     styleFrame()
 end
 
 local function onAddonMessage(prefix, message, channel, sender)
     if prefix ~= PREFIX or channel ~= "GUILD" or not sender then return end
+    if isPlayerSender(sender) then return end
     sender = string.gsub(sender, "%-.*$", "")
-    if sender == playerName() then return end
     local p = split(message)
     if p[1] == "S" and #p >= 6 then
         local rec = DPTL_DB.kills[sender] or { daily = {}, weekly = {} }
@@ -558,6 +655,7 @@ root:SetScript("OnEvent", function(self, event, ...)
         ownStats()
         syncLifetimeKills()
     elseif event == "PLAYER_LOGIN" then
+        migratePlayerIdentity()
         syncLifetimeKills()
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
             C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
