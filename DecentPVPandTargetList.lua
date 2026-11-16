@@ -692,6 +692,8 @@ function DPTL_BuildGuildKillsPage(parent)
     parent.dptlWidgets = {}
     local function add(widget) table.insert(parent.dptlWidgets, widget); return widget end
     local width = math.max(300, parent:GetWidth())
+    local pageHeight = math.max(280, parent:GetHeight())
+    local rowStep = math.max(19, (pageHeight - 130) / 9)
     local columns = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
     local colWidth = (width - 16) / 3
     for col, category in ipairs(columns) do
@@ -707,7 +709,7 @@ function DPTL_BuildGuildKillsPage(parent)
         table.sort(ranking, function(a, b) if a.value == b.value then return a.name < b.name end return a.value > b.value end)
         for i = 1, 10 do
             local line = add(parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"))
-            line:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -28 - (i - 1) * 19)
+            line:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -28 - (i - 1) * rowStep)
             line:SetWidth(colWidth - 6); line:SetJustifyH("LEFT")
             if ranking[i] then line:SetText(string.format("%2d. %s  %d", i, ranking[i].name, ranking[i].value))
             else line:SetText(string.format("%2d. —", i)) end
@@ -730,11 +732,13 @@ function DPTL_BuildTargetKillsPage(parent)
     parent.dptlTargetWidgets = {}
     local function add(widget) table.insert(parent.dptlTargetWidgets, widget); return widget end
     local width = math.max(300, parent:GetWidth())
+    local pageHeight = math.max(280, parent:GetHeight())
     local panelWidth = math.min(680, width - 12)
     local left = (width - panelWidth) / 2
     local weekStart = currentWeekStart()
     local columns = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
     local columnWidth = panelWidth / 3
+    local rowStep = math.max(20, (pageHeight - 110) / 9)
     for col, category in ipairs(columns) do
         local x = left + (col - 1) * columnWidth
         local aggregates, totalMoney, totalKills = {}, 0, 0
@@ -772,7 +776,7 @@ function DPTL_BuildTargetKillsPage(parent)
         total:SetText(string.format("%d kills | earned %s", totalKills, formatMoney(totalMoney)))
         for i = 1, 10 do
             local line = add(parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"))
-            line:SetPoint("TOPLEFT", parent, "TOPLEFT", x + 6, -48 - (i - 1) * 20)
+            line:SetPoint("TOPLEFT", parent, "TOPLEFT", x + 6, -48 - (i - 1) * rowStep)
             line:SetWidth(columnWidth - 12); line:SetJustifyH("LEFT")
             if ranking[i] then
                 line:SetText(string.format("%2d. %s — %d | %s", i, ranking[i].name, ranking[i].kills, formatMoney(ranking[i].money)))

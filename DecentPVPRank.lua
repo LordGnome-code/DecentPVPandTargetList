@@ -211,9 +211,11 @@ local function applyLayout()
         or (#tabNames > 4 and 100 or 125)
     local firstTabX = math.max(10, (window:GetWidth() - (#tabNames * tabWidth + (#tabNames - 1) * tabGap)) / 2)
     local pageScale = 1
+    local embeddedPageHeight = 280
     if embeddedMode then
         window.badge:Hide(); window.status:Hide(); window.rankBar:Hide(); window.honorBar:Hide()
         local availableHeight = math.max(90, window:GetHeight() - 100)
+        embeddedPageHeight = availableHeight
         pageScale = math.min(1, (window:GetWidth() - 20) / 530, availableHeight / 280)
     end
     for i, name in ipairs(tabNames) do
@@ -238,7 +240,7 @@ local function applyLayout()
         window.pages[name]:ClearAllPoints()
         if embeddedMode then
             local page = window.pages[name]
-            page:SetSize(530, 280)
+            page:SetSize(530, embeddedPageHeight / pageScale)
             page:SetScale(pageScale)
             page:SetPoint("TOPLEFT", window, "TOPLEFT", (window:GetWidth() - 530 * pageScale) / 2, -18)
         else
@@ -247,6 +249,49 @@ local function applyLayout()
             window.pages[name]:SetScale(1)
             window.pages[name]:SetSize(530, 280)
         end
+    end
+    if embeddedMode then
+        local pageHeight = embeddedPageHeight / pageScale
+        local function move(frame, x, y)
+            if not frame then return end
+            frame:ClearAllPoints()
+            frame:SetPoint("TOPLEFT", x or 0, y)
+        end
+        for i, row in ipairs(window.rankRows or {}) do move(row, 0, -(i - 1) * 32) end
+        move(window.rank.note, 8, -164)
+        for i, decoration in ipairs(window.rankDecorations or {}) do
+            if decoration ~= window.rank.note then move(decoration, i == 2 and 8 or (i == 3 and 270 or (i == 4 and 345 or 435)), -188) end
+        end
+        local mapStep = math.max(22, (pageHeight - 245) / 3)
+        for i, row in ipairs(window.mapRows or {}) do
+            row:SetWidth(530)
+            move(row, 0, -205 - (i - 1) * mapStep)
+        end
+
+        local honorGap = math.max(34, (pageHeight - 230) / 5)
+        for i, row in ipairs(window.honorRows or {}) do move(row, 0, -(i - 1) * honorGap) end
+        move(window.honor and window.honor.reset, 8, -pageHeight + 67)
+        move(window.honor and window.honor.note, 8, -pageHeight + 34)
+
+        local matchStep = math.max(23, (pageHeight - 82) / 8)
+        for i, header in ipairs(window.matchHeaders or {}) do
+            move(header, ({ 8, 270, 345, 435 })[i], 0)
+        end
+        for i, row in ipairs(window.matchRows or {}) do
+            row:SetWidth(530)
+            move(row, 0, -23 - (i - 1) * matchStep)
+        end
+        move(window.historyPrevious, 8, -pageHeight + 32)
+        move(window.historyNext, 450, -pageHeight + 32)
+        move(window.historyPage, 100, -pageHeight + 25)
+
+        local infoGap = math.max(31, (pageHeight - 190) / 4)
+        for i, row in ipairs(window.infoRows or {}) do move(row, 0, -(i - 1) * infoGap) end
+        move(window.rewardHeading, 8, -infoGap * 4 - 10)
+        local rewardTop = infoGap * 4 + 32
+        window.rewardScroll:ClearAllPoints()
+        window.rewardScroll:SetPoint("TOPLEFT", 8, -rewardTop)
+        window.rewardScroll:SetSize(492, math.max(80, pageHeight - rewardTop - 10))
     end
     window.footer:ClearAllPoints(); window.footer:SetPoint("TOPLEFT", 20, classic and -517 or -496)
     window.footer:SetShown(not embeddedMode)
@@ -754,8 +799,11 @@ local function build()
     end
     local rank = window.pages["Rank Points"]
     window.rank = {}
+    window.rankRows = {}
+    window.rankDecorations = {}
     local targetValue, targetRow = metric(rank, 0, "Target rank", "Your personal rank goal. Use - / + to change it. The planner compares its cumulative Rank Point requirement to your season total.")
     window.rank.target = targetValue
+    table.insert(window.rankRows, targetRow)
     -- Leave space for target controls without overlapping the value.
     window.rank.target:SetWidth(225)
     -- Children of the hover row always receive clicks above its tooltip hit area.
@@ -773,15 +821,21 @@ local function build()
         "Raise target rank", "Choose the next rank as your planning goal.")
     window.rank.minusButton:SetFrameLevel(targetRow:GetFrameLevel() + 1)
     window.rank.plusButton:SetFrameLevel(targetRow:GetFrameLevel() + 1)
-    window.rank.remaining = metric(rank, -29, "Points to target", "Target rank's total RP requirement minus your season RP. Zero means you already reached the target.")
-    window.rank.ceiling = metric(rank, -58, "Weekly ceiling", "The maximum season-total RP currently available. This is not a separate weekly-earned allowance. Further ranks open as the season progresses.")
-    window.rank.estimate = metric(rank, -87, "Estimated games / time", "Points remaining divided by average RP from usable matches, rounded up. Time uses observed match durations and excludes queues. Capped and zero-RP matches are excluded. Small samples and bonus events can skew estimates.")
-    window.rank.rate = metric(rank, -116, "Your observed pace", "Average RP per usable BG and RP per hour of observed match time. Uses up to 100 stored matches across maps; queues are excluded.")
+    local value, rowFrame
+    value, rowFrame = metric(rank, -29, "Points to target", "Target rank's total RP requirement minus your season RP. Zero means you already reached the target.")
+    window.rank.remaining = value; table.insert(window.rankRows, rowFrame)
+    value, rowFrame = metric(rank, -58, "Weekly ceiling", "The maximum season-total RP currently available. This is not a separate weekly-earned allowance. Further ranks open as the season progresses.")
+    window.rank.ceiling = value; table.insert(window.rankRows, rowFrame)
+    value, rowFrame = metric(rank, -87, "Estimated games / time", "Points remaining divided by average RP from usable matches, rounded up. Time uses observed match durations and excludes queues. Capped and zero-RP matches are excluded. Small samples and bonus events can skew estimates.")
+    window.rank.estimate = value; table.insert(window.rankRows, rowFrame)
+    value, rowFrame = metric(rank, -116, "Your observed pace", "Average RP per usable BG and RP per hour of observed match time. Uses up to 100 stored matches across maps; queues are excluded.")
+    window.rank.rate = value; table.insert(window.rankRows, rowFrame)
     window.rank.note = text(rank, 8, -148, "", "GameFontDisableSmall")
-    text(rank, 8, -173, "BATTLEGROUND", "GameFontNormalSmall")
-    text(rank, 270, -173, "WIN %", "GameFontNormalSmall")
-    text(rank, 345, -173, "RP / BG", "GameFontNormalSmall")
-    text(rank, 435, -173, "BGs LEFT", "GameFontNormalSmall")
+    table.insert(window.rankDecorations, window.rank.note)
+    table.insert(window.rankDecorations, text(rank, 8, -173, "BATTLEGROUND", "GameFontNormalSmall"))
+    table.insert(window.rankDecorations, text(rank, 270, -173, "WIN %", "GameFontNormalSmall"))
+    table.insert(window.rankDecorations, text(rank, 345, -173, "RP / BG", "GameFontNormalSmall"))
+    table.insert(window.rankDecorations, text(rank, 435, -173, "BGs LEFT", "GameFontNormalSmall"))
     window.mapRows = {}
     for i = 1, 4 do
         local row = tableRow(rank, -191 - (i - 1) * 22)
@@ -794,23 +848,28 @@ local function build()
         window.mapRows[i] = row
     end
     local honor = window.pages.Honor
-    window.honor = {
-        wallet = metric(honor, 0, "Honor wallet", "Honor currently held versus the game's wallet cap. Honor is a spendable currency, separate from Rank Points."),
-        room = metric(honor, -34, "Room before cap", "How much more Honor you can hold. Spend Honor before the wallet fills; additional Honor may be wasted."),
-        warning = metric(honor, -68, "Wallet status", "Orange indicates at least 90% full; red indicates full. With alerts enabled, a chat warning fires near the cap and rearms after dropping below 85%."),
-        session = metric(honor, -102, "Session Honor gained", "Sum of positive wallet changes observed this login or since New session. Spending between updates can hide gains. This does not measure Honor lost to the cap."),
-        matches = metric(honor, -136, "Session battlegrounds", "Completed BGs and wins recorded this session. Abandoned games without an observed result are not included."),
-        rp = metric(honor, -170, "Session Rank Points", "Positive changes in season RP observed this session, including gains outside BGs. Resets on login, /reload or New session."),
-    }
-    tooltip(button(honor, 8, -220, 140, "New session", function()
+    window.honor = {}; window.honorRows = {}
+    local function honorMetric(key, y, heading, description)
+        local metricValue, metricRow = metric(honor, y, heading, description)
+        window.honor[key] = metricValue; table.insert(window.honorRows, metricRow)
+    end
+    honorMetric("wallet", 0, "Honor wallet", "Honor currently held versus the game's wallet cap. Honor is a spendable currency, separate from Rank Points.")
+    honorMetric("room", -34, "Room before cap", "How much more Honor you can hold. Spend Honor before the wallet fills; additional Honor may be wasted.")
+    honorMetric("warning", -68, "Wallet status", "Orange indicates at least 90% full; red indicates full. With alerts enabled, a chat warning fires near the cap and rearms after dropping below 85%.")
+    honorMetric("session", -102, "Session Honor gained", "Sum of positive wallet changes observed this login or since New session. Spending between updates can hide gains. This does not measure Honor lost to the cap.")
+    honorMetric("matches", -136, "Session battlegrounds", "Completed BGs and wins recorded this session. Abandoned games without an observed result are not included.")
+    honorMetric("rp", -170, "Session Rank Points", "Positive changes in season RP observed this session, including gains outside BGs. Resets on login, /reload or New session.")
+    window.honor.reset = tooltip(button(honor, 8, -220, 140, "New session", function()
         session = { points = 0, honor = 0, matches = 0, wins = 0 }; render()
     end), "Reset session counters", "Start fresh session counters. Saved match history and learned estimates are retained.")
-    text(honor, 8, -256, "Honor is for purchases; Rank Points advance your rank.", "GameFontDisableSmall")
+    window.honor.note = text(honor, 8, -256, "Honor is for purchases; Rank Points advance your rank.", "GameFontDisableSmall")
     local matches = window.pages.Matches
-    text(matches, 8, 0, "BATTLEGROUND", "GameFontNormalSmall")
-    text(matches, 270, 0, "RESULT", "GameFontNormalSmall")
-    text(matches, 345, 0, "RP", "GameFontNormalSmall")
-    text(matches, 435, 0, "TIME", "GameFontNormalSmall")
+    window.matchHeaders = {
+        text(matches, 8, 0, "BATTLEGROUND", "GameFontNormalSmall"),
+        text(matches, 270, 0, "RESULT", "GameFontNormalSmall"),
+        text(matches, 345, 0, "RP", "GameFontNormalSmall"),
+        text(matches, 435, 0, "TIME", "GameFontNormalSmall"),
+    }
     window.matchRows = {}
     for i = 1, 9 do
         local row = tableRow(matches, -23 - (i - 1) * 23)
@@ -830,15 +889,19 @@ local function build()
         "Older results", "Go to the next page of battleground results.")
     window.historyPage = text(matches, 100, -250, "", "GameFontHighlightSmall")
     local info = window.pages.Info
-    window.info = {
-        season = metric(info, 0, "Season Rank Points", "Total RP toward ranks this season: completed rank thresholds plus progress within your current rank."),
-        ceiling = metric(info, -31, "Current weekly ceiling", "The game's highest available rank this week and its cumulative RP requirement. Unknown means the client has not supplied the data."),
-        week = metric(info, -62, "Season week", "The season week reported by the game. This addon does not guess a future cap schedule."),
-        reset = metric(info, -93, "Next weekly reset", "Countdown from the client's weekly reset API, displayed in hours and minutes. The timer refreshes every two seconds outside combat."),
-    }
-    text(info, 8, -135, "NEXT RANK REWARDS", "GameFontNormalSmall")
+    window.info = {}; window.infoRows = {}
+    local function infoMetric(key, y, heading, description)
+        local metricValue, metricRow = metric(info, y, heading, description)
+        window.info[key] = metricValue; table.insert(window.infoRows, metricRow)
+    end
+    infoMetric("season", 0, "Season Rank Points", "Total RP toward ranks this season: completed rank thresholds plus progress within your current rank.")
+    infoMetric("ceiling", -31, "Current weekly ceiling", "The game's highest available rank this week and its cumulative RP requirement. Unknown means the client has not supplied the data.")
+    infoMetric("week", -62, "Season week", "The season week reported by the game. This addon does not guess a future cap schedule.")
+    infoMetric("reset", -93, "Next weekly reset", "Countdown from the client's weekly reset API, displayed in hours and minutes. The timer refreshes every two seconds outside combat.")
+    window.rewardHeading = text(info, 8, -135, "NEXT RANK REWARDS", "GameFontNormalSmall")
     local rewards = CreateFrame("ScrollFrame", nil, info, "UIPanelScrollFrameTemplate")
     rewards:SetPoint("TOPLEFT", 8, -157); rewards:SetSize(492, 115)
+    window.rewardScroll = rewards
     local content = CreateFrame("Frame", nil, rewards)
     content:SetSize(488, 1); rewards:SetScrollChild(content)
     window.reward = text(content, 0, 0, "", "GameFontHighlightSmall")
