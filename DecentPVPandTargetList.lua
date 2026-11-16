@@ -4,7 +4,7 @@ local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
 local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
-local DB_DEFAULTS = { kills = {}, targets = {}, targetKills = {}, nextId = 1, layout = "modernblizz", fontScale = 1, pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
+local DB_DEFAULTS = { kills = {}, targets = {}, targetKills = {}, nextId = 1, layout = "modernblizz", pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
     Alliance = { 0.16, 0.42, 0.88 },
@@ -646,26 +646,15 @@ refresh = function()
         settingButton(ui.body, "Modern-blizz", settingsLeft + 230, -30, 110, function()
             DPTL_SetLayout("modernblizz")
         end)
-        local fontScale = math.max(0.8, math.min(1.6, tonumber(DPTL_DB.fontScale) or 1))
-        centeredLabel(ui.body, "Font size: " .. math.floor(fontScale * 100 + 0.5) .. "%", -67, bodyWidth)
-        settingButton(ui.body, "-", (bodyWidth - 122) / 2, -88, 36, function()
-            DPTL_SetFontScale((tonumber(DPTL_DB.fontScale) or 1) - 0.1)
-        end)
-        settingButton(ui.body, "+", (bodyWidth - 122) / 2 + 86, -88, 36, function()
-            DPTL_SetFontScale((tonumber(DPTL_DB.fontScale) or 1) + 0.1)
-        end)
-        settingButton(ui.body, "Reset", (bodyWidth - 122) / 2 + 41, -88, 40, function()
-            DPTL_SetFontScale(1)
-        end)
-        settingButton(ui.body, "Share stats", settingsLeft, -127, 100, function()
+        settingButton(ui.body, "Share stats", settingsLeft, -68, 100, function()
             local ok, err = shareStats()
             if ok then info("Stats shared with your guild.") else info(err) end
         end)
-        settingButton(ui.body, "DecentPVP tracker settings", settingsLeft, -164, 200, function()
+        settingButton(ui.body, "DecentPVP tracker settings", settingsLeft, -105, 200, function()
             if DecentPVPRank_OpenSettings then DecentPVPRank_OpenSettings() end
         end)
-        centeredLabel(ui.body, "Reports share with guild members when addon messages are permitted.", -197, bodyWidth)
-        centeredLabel(ui.body, "Honorable kill credit is tracked automatically; Forever may not provide victim names.", -221, bodyWidth)
+        centeredLabel(ui.body, "Reports share with guild members when addon messages are permitted.", -138, bodyWidth)
+        centeredLabel(ui.body, "Honorable kill credit is tracked automatically; Forever may not provide victim names.", -162, bodyWidth)
     end
     if ui.settingsButton then
         ui.settingsButton:SetAlpha(ui.tab == "settings" and 1 or 0.82)
@@ -679,16 +668,6 @@ function DPTL_SetLayout(layout)
     styleFrame()
     if DecentPVPRank_SetBlizzardUI then DecentPVPRank_SetBlizzardUI(layout == "blizzlike") end
     if DecentPVPRank_SetForgeUI then DecentPVPRank_SetForgeUI(layout == "modernblizz") end
-end
-
-function DPTL_SetFontScale(scale)
-    DPTL_DB.fontScale = math.max(0.8, math.min(1.6, tonumber(scale) or 1))
-    if ui.body then
-        local windowScale = ui.contentScale or 1
-        ui.body:SetScale(windowScale * DPTL_DB.fontScale)
-        if DecentPVPRank_ResizeEmbedded then DecentPVPRank_ResizeEmbedded() end
-    end
-    if ui.tab == "settings" then refresh() end
 end
 
 function DPTL_SetBlizzardLayout(enabled)
@@ -905,8 +884,7 @@ local function buildUI()
         scale = math.max(0.4, scale)
         ui.body:ClearAllPoints()
         ui.body:SetSize(716, 581)
-        ui.contentScale = scale
-        ui.body:SetScale(scale * (tonumber(DPTL_DB.fontScale) or 1))
+        ui.body:SetScale(scale)
         ui.body:SetPoint("CENTER", ui.inset, "CENTER")
     end
     layoutBodyContent()
@@ -1007,7 +985,7 @@ root:SetScript("OnEvent", function(self, event, ...)
         -- Existing saved layouts remain the player's choice; new installations default to Modern-blizz.
         if DPTL_DB.layout == "forge" then DPTL_DB.layout = "modernblizz" end
         DPTL_DB.shareChannel = nil
-        DPTL_DB.fontScale = math.max(0.8, math.min(1.6, tonumber(DPTL_DB.fontScale) or 1))
+        DPTL_DB.fontScale = nil
         ownStats()
         syncLifetimeKills()
     elseif event == "PLAYER_LOGIN" then

@@ -960,7 +960,11 @@ local function build()
     end)
     selectTab(selectedTab)
     applyTheme()
-    buildMinimapButton()
+    if embeddedMode then
+        if minimapButton then minimapButton:Hide() end
+    else
+        buildMinimapButton()
+    end
     if Settings and Settings.RegisterCanvasLayoutCategory then
         local page = CreateFrame("Frame")
         text(page, 20, -20, "Decent PvP Rank", "GameFontNormalLarge")
@@ -974,6 +978,7 @@ openSettings = function() settings:Show(); applyTheme() end
 function DecentPVPRank_EmbedInto(parent)
     if not window or not parent then return false end
     embeddedMode, embeddedParent = true, parent
+    if minimapButton then minimapButton:Hide() end
     window:SetParent(parent)
     window:SetFrameStrata(parent:GetFrameStrata())
     window:SetFrameLevel(parent:GetFrameLevel() + 1)
