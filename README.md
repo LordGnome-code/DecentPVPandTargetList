@@ -7,20 +7,22 @@ A guild PvP addon for **WoW Forever** (interface 16001). It has no external libr
 1. Copy the `DecentPVPandTargetList` folder, containing the `.toc` and `.lua`, into `World of Warcraft/_forever_/Interface/AddOns/`.
 2. Restart the game or use `/reload`.
 3. Open the addon with `/dptl` or `/targetlist`.
-4. Join a guild to exchange rankings and target entries.
+4. Choose Guild, Party, or Raid in Settings to exchange rankings and target entries with members using the same channel.
 
 ## Features
 
 - Reads the character's lifetime honorable kill total from `GetPVPLifetimeStats()` and tracks daily and weekly honorable kill credits from Forever's `PLAYER_PVP_KILLS_CHANGED` event. The event may not provide the defeated player's name, so automatic daily/weekly tracking does not guess it; the manual **Record kill** action remains as an optional correction.
 - Shows daily, weekly, and lifetime guild top 10 rankings.
-- Automatically shares updated count snapshots with the guild when the client permits addon messaging. If a kill is credited during combat or messaging lockdown, its report is queued until combat ends and restrictions clear. **Share stats** remains available for a manual refresh.
+- Combines the Decent PvP Rank tracker in the **DecentPVP** tab, with Rank Points, Honor, Matches, Info, and Guild Kills subtabs.
+- Automatically shares updated count snapshots over the selected addon-message channel when the client permits sending. If a kill is credited during combat or messaging lockdown, its report is queued until combat ends and restrictions clear. **Share stats** remains available for a manual refresh.
 - Provides a guild target board for enemy player names, race and class portraits, reward amounts, and proof requirements.
 - Rewards can be entered as gold, silver, and copper or as free-form text.
-- Each character can maintain up to three active targets; only the character that created a target can remove it. Target race and class are selected manually when creating the entry.
-- Uses Horde red or Alliance blue accents, visible Kill Rankings/Guild Targets tabs, and a top-right Settings toggle.
+- Each character can maintain up to three active targets; only the character that created a target can cancel it. A member can enter a name to credit, then record and remove an eliminated target.
+- The **Target Kills** subtab shows daily, weekly, and lifetime target eliminations and coin rewards by credited player.
+- Uses Horde red or Alliance blue accents, centered main tabs and title, and a top-right Settings toggle. The window can be resized down to 450 × 410 pixels.
 - Offers a compact faction-colored layout and a distinct Blizzard-like rock frame, marble inset, and header artwork under Settings.
-- Adds a standard sword Addon Compartment icon that toggles the main window. IconBag - Forever collects Addon Compartment entries into its icon drawer.
+- Adds a Troll head icon that toggles the main window. IconBag - Forever collects Addon Compartment entries into its icon drawer.
 
 ## Notes
 
-Guild members need the addon enabled to exchange rankings and target changes. Rankings are personal snapshots received from each member; counts are not independently verified. The all-time value reflects the character's lifetime honorable kills reported by the game, while daily and weekly counts reflect credits observed by the addon and use each client's local calendar. Target records and kill counts are saved in the addon's SavedVariables file.
+Members in the selected channel need the addon enabled to exchange rankings and target changes. Rankings are personal snapshots received from each member; counts are not independently verified. The all-time value reflects the character's lifetime honorable kills reported by the game, while daily and weekly counts reflect credits observed by the addon and use each client's local calendar. Target records and kill counts are saved in the addon's SavedVariables files.

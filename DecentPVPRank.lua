@@ -204,15 +204,27 @@ local function applyLayout()
         tile = true, tileSize = 64, edgeSize = 16, insets = { left = 4, right = 4, top = 4, bottom = 4 },
     } or { bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
     local tabNames = window.subTabOrder or { "Rank Points", "Honor", "Matches", "Info" }
-    local tabWidth = #tabNames > 4 and 100 or 125
-    local tabGap = #tabNames > 4 and 7 or 10
+    local tabGap = embeddedMode and 6 or (#tabNames > 4 and 7 or 10)
+    local tabWidth = embeddedMode and math.max(54, (window:GetWidth() - 20 - (#tabNames - 1) * tabGap) / #tabNames)
+        or (#tabNames > 4 and 100 or 125)
     local firstTabX = math.max(10, (window:GetWidth() - (#tabNames * tabWidth + (#tabNames - 1) * tabGap)) / 2)
+    local pageScale = 1
+    if embeddedMode then
+        window.badge:Hide(); window.status:Hide(); window.rankBar:Hide(); window.honorBar:Hide()
+        local availableHeight = math.max(90, window:GetHeight() - 100)
+        pageScale = math.min(1, (window:GetWidth() - 20) / 530, availableHeight / 280)
+    end
     for i, name in ipairs(tabNames) do
         local tab = window.tabs[name]
         tab:ClearAllPoints()
-        local tabY = embeddedMode and -(window:GetHeight() - 40) or (classic and -450 or -148)
+        local tabY = embeddedMode and -(window:GetHeight() - 36) or (classic and -450 or -148)
         tab:SetPoint("TOPLEFT", window, "TOPLEFT", firstTabX + (i - 1) * (tabWidth + tabGap), tabY)
         tab:SetSize(tabWidth, classic and 32 or 30)
+        if embeddedMode and tabWidth < 82 then
+            tab:SetText(({ ["Rank Points"] = "RP", Honor = "Honor", Matches = "BGs", Info = "Info", ["Guild Kills"] = "Kills" })[name] or name)
+        else
+            tab:SetText(name)
+        end
         tab:SetBackdrop(not classic and {
             bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1,
         } or nil)
@@ -222,11 +234,15 @@ local function applyLayout()
         tab.join:ClearAllPoints()
         tab.join:SetPoint(classic and "TOPLEFT" or "BOTTOMLEFT", tab, classic and "TOPLEFT" or "BOTTOMLEFT", 1, 0)
         window.pages[name]:ClearAllPoints()
-        local pageTop = classic and -160 or -190
-        window.pages[name]:SetPoint("TOPLEFT", window, "TOPLEFT", 20, pageTop)
         if embeddedMode then
-            window.pages[name]:SetSize(window:GetWidth() - 40, math.max(280, window:GetHeight() - 280))
+            local page = window.pages[name]
+            page:SetSize(530, 280)
+            page:SetScale(pageScale)
+            page:SetPoint("TOPLEFT", window, "TOPLEFT", (window:GetWidth() - 530 * pageScale) / 2, -18)
         else
+            local pageTop = classic and -160 or -190
+            window.pages[name]:SetPoint("TOPLEFT", window, "TOPLEFT", 20, pageTop)
+            window.pages[name]:SetScale(1)
             window.pages[name]:SetSize(530, 280)
         end
     end

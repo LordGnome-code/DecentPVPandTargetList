@@ -4,7 +4,7 @@ local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
 local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
-local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", shareChannel = "GUILD", pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
+local DB_DEFAULTS = { kills = {}, targets = {}, targetKills = {}, nextId = 1, layout = "normal", shareChannel = "GUILD", pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
     Alliance = { 0.16, 0.42, 0.88 },
@@ -164,6 +164,18 @@ end
 
 local function targetKey(owner, id) return owner .. ":" .. tostring(id) end
 
+local function rewardCopper(gold, silver, copper)
+    return (toNumber(gold) * 10000) + (toNumber(silver) * 100) + toNumber(copper)
+end
+
+local function formatMoney(copper)
+    copper = math.max(0, math.floor(toNumber(copper)))
+    local gold = math.floor(copper / 10000)
+    local silver = math.floor((copper % 10000) / 100)
+    local coins = copper % 100
+    return string.format("%dg %ds %dc", gold, silver, coins)
+end
+
 local function migratePlayerIdentity()
     local short, full = UnitName("player"), playerName()
     if not short or not full or short == full then return end
@@ -234,7 +246,7 @@ root:RegisterEvent("CHAT_MSG_ADDON")
 root:RegisterEvent("PLAYER_PVP_KILLS_CHANGED")
 root:RegisterEvent("PLAYER_REGEN_ENABLED")
 
-local ui = { rows = {}, tab = "pvp" }
+local ui = { rows = {}, tab = "pvp", targetPage = "active" }
 local function info(text)
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff62c5ffDPTL:|r " .. text) end
 end
@@ -259,8 +271,21 @@ local function label(parent, text, x, y, width, font)
     fs:SetText(text)
     return track(fs)
 end
+local function centeredLabel(parent, text, y, width, font)
+    local fs = parent:CreateFontString(nil, "ARTWORK", font or "GameFontHighlightSmall")
+    fs:SetPoint("TOP", parent, "TOP", 0, y)
+    fs:SetWidth(width or parent:GetWidth())
+    fs:SetJustifyH("CENTER")
+    fs:SetText(text)
+    return track(fs)
+end
 local function row(text, y)
-    return label(ui.body, text, 6, y, 510)
+    local fs = ui.body:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    fs:SetPoint("TOP", ui.body, "TOP", 0, y)
+    fs:SetWidth(math.max(300, ui.body:GetWidth() - 12))
+    fs:SetJustifyH("CENTER")
+    fs:SetText(text)
+    return track(fs)
 end
 local function button(parent, text, x, y, width, action)
     local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
@@ -327,6 +352,22 @@ local function styleFrame()
             tab.active:SetShown(false)
         end
     end
+    for name, tab in pairs(ui.targetSubTabs or {}) do
+        local active = name == ui.targetPage
+        if blizzard then
+            tab:SetBackdrop(nil)
+            tab.label:SetTextColor(1, active and 1 or 0.78, active and 1 or 0.5)
+            tab.active:SetShown(active)
+        else
+            tab:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+            tab:SetBackdropColor(active and accent[1] * 0.22 + 0.04 or 0.035,
+                active and accent[2] * 0.22 + 0.04 or 0.035, active and accent[3] * 0.22 + 0.04 or 0.04, 1)
+            tab:SetBackdropBorderColor(active and accent[1] or 0.25, active and accent[2] or 0.25,
+                active and accent[3] or 0.28, 1)
+            tab.label:SetTextColor(active and 1 or 0.7, active and 0.92 or 0.7, active and 0.72 or 0.7)
+            tab.active:Hide()
+        end
+    end
 end
 
 local function selectTab(name)
@@ -336,6 +377,12 @@ local function selectTab(name)
     refresh()
     styleFrame()
     if name == "pvp" and DecentPVPRank_RefreshGuildKills then DecentPVPRank_RefreshGuildKills() end
+end
+
+local function selectTargetPage(name)
+    ui.targetPage = name
+    refresh()
+    styleFrame()
 end
 
 local function dropdown(parent, title, values, x, y, width, initial, changed)
@@ -372,34 +419,47 @@ end
 
 refresh = function()
     clearRows()
-    local bodyWidth = math.max(546, ui.body:GetWidth())
-    local bodyHeight = math.max(361, ui.body:GetHeight())
+    local measuredWidth, measuredHeight = ui.body:GetWidth(), ui.body:GetHeight()
+    local bodyWidth = math.max(300, measuredWidth > 0 and measuredWidth or (DPTL_DB.windowWidth - 48))
+    local bodyHeight = math.max(220, measuredHeight > 0 and measuredHeight or (DPTL_DB.windowHeight - 120))
+    for _, tab in pairs(ui.targetSubTabs or {}) do tab:SetShown(ui.tab == "targets") end
+    if ui.tab ~= "targets" or ui.targetPage ~= "kills" then
+        for _, widget in ipairs(ui.body.dptlTargetWidgets or {}) do widget:Hide(); widget:SetParent(nil) end
+        ui.body.dptlTargetWidgets = {}
+    end
     if ui.tab ~= "targets" and ui.targetScroll then ui.targetScroll:Hide() end
     if ui.tab == "pvp" then
         if ui.targetScroll then ui.targetScroll:Hide() end
     elseif ui.tab == "targets" then
+        if ui.targetPage == "kills" then
+            if ui.targetScroll then ui.targetScroll:Hide() end
+            DPTL_BuildTargetKillsPage(ui.body)
+        else
         row("Guild targets — only the creator can remove their entries.", 0)
         local targets = {}
         for _, t in pairs(DPTL_DB.targets) do table.insert(targets, t) end
         table.sort(targets, function(a, b) return (a.created or 0) > (b.created or 0) end)
         local listTop = -25
-        local formTop = -bodyHeight + 211
-        local contentWidth = math.max(470, bodyWidth - 40)
+        local formTop = -bodyHeight + 195
+        local contentWidth = math.max(310, math.min(bodyWidth - 36, 660))
+        local contentLeft = (bodyWidth - contentWidth) / 2
         if not ui.targetScroll then
             ui.targetScroll = CreateFrame("ScrollFrame", "DPTLTargetScroll", ui.body, "UIPanelScrollFrameTemplate")
             ui.targetContent = CreateFrame("Frame", nil, ui.targetScroll)
             ui.targetScroll:SetScrollChild(ui.targetContent)
         end
         ui.targetScroll:ClearAllPoints()
-        ui.targetScroll:SetPoint("TOPLEFT", ui.body, "TOPLEFT", 2, listTop)
-        ui.targetScroll:SetPoint("BOTTOMRIGHT", ui.body, "TOPRIGHT", -24, formTop - 10)
+        ui.targetScroll:SetPoint("TOPLEFT", ui.body, "TOPLEFT", contentLeft, listTop - 22)
+        ui.targetScroll:SetPoint("BOTTOMLEFT", ui.body, "TOPLEFT", contentLeft, formTop - 10)
+        ui.targetScroll:SetWidth(contentWidth)
         ui.targetScroll:Show()
         for _, old in ipairs(ui.targetRows or {}) do old:Hide(); old:SetParent(nil) end
         ui.targetRows = {}
         for index, target in ipairs(targets) do
-            local y = -((index - 1) * 48)
+            local targetRecord = target
+            local y = -((index - 1) * 70)
             local rowFrame = CreateFrame("Frame", nil, ui.targetContent)
-            rowFrame:SetSize(contentWidth, 44); rowFrame:SetPoint("TOPLEFT", ui.targetContent, "TOPLEFT", 0, y)
+            rowFrame:SetSize(contentWidth, 66); rowFrame:SetPoint("TOPLEFT", ui.targetContent, "TOPLEFT", 0, y)
             local raceIcon = rowFrame:CreateTexture(nil, "ARTWORK")
             raceIcon:SetSize(28, 28); raceIcon:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", 0, -2)
             raceIcon:SetTexture(racePortrait(target.race) or "Interface\\Icons\\INV_Misc_QuestionMark")
@@ -411,19 +471,47 @@ refresh = function()
             if reward == "" then reward = string.format("%sg %ss %sc", target.gold, target.silver, target.copper) end
             local details = rowFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
             details:SetPoint("TOPLEFT", classIcon, "TOPRIGHT", 7, 0)
-            details:SetWidth(contentWidth - 154); details:SetJustifyH("LEFT")
+            details:SetWidth(math.max(100, contentWidth - 260)); details:SetJustifyH("LEFT")
             details:SetText(string.format("%s (%s %s) | %s\nSubmitted by %s | Reward: %s | Proof: %s",
                 target.name, target.race or "?", target.class or "?", date("%b %d", target.created or time()),
                 target.owner or "Unknown", reward, target.proof or ""))
+            local creditedName = CreateFrame("EditBox", nil, rowFrame, "InputBoxTemplate")
+            creditedName:SetSize(98, 20); creditedName:SetPoint("TOPRIGHT", rowFrame, "TOPRIGHT", -4, -2)
+            creditedName:SetAutoFocus(false); creditedName:SetMaxLetters(48); creditedName:SetText(playerName())
+            creditedName:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText("Name to credit for this target elimination")
+                GameTooltip:Show()
+            end)
+            creditedName:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            local report = button(rowFrame, "Record & remove", contentWidth - 112, -28, 106, function()
+                local killer = safe(creditedName:GetText(), 48)
+                if killer == "" then info("Enter the name to credit for this target kill."); return end
+                local key = targetKey(targetRecord.owner, targetRecord.id)
+                if DPTL_DB.targetKills[key] then info("This target kill was already recorded."); return end
+                local payload = table.concat({ "K", safe(targetRecord.owner, 48), targetRecord.id, safe(targetRecord.name, 35), killer,
+                    safe(targetRecord.gold, 8), safe(targetRecord.silver, 4), safe(targetRecord.copper, 4), safe(targetRecord.reward, 40), time() }, "|")
+                local ok, err = sendGuild(payload)
+                if not ok then info("Target kill was not shared: " .. err); return end
+                DPTL_DB.targetKills[key] = { owner = targetRecord.owner, id = targetRecord.id, target = targetRecord.name,
+                    creditedTo = killer, gold = targetRecord.gold, silver = targetRecord.silver, copper = targetRecord.copper,
+                    reward = targetRecord.reward, killedAt = time(), reporter = playerName() }
+                DPTL_DB.pendingTargets[key] = nil; DPTL_DB.targets[key] = nil
+                local rewardText = targetRecord.reward or ""
+                info("Target kill credited to " .. killer .. "; reward " .. (rewardText ~= "" and rewardText or formatMoney(rewardCopper(targetRecord.gold, targetRecord.silver, targetRecord.copper))) .. ".")
+                refresh()
+            end)
+            table.insert(ui.targetRows, creditedName)
+            table.insert(ui.targetRows, report)
             if target.owner == playerName() then
-                local remove = button(rowFrame, "Remove", contentWidth - 72, -8, 64, function()
-                    local key = targetKey(target.owner, target.id)
+                local remove = button(rowFrame, "Cancel", contentWidth - 190, -28, 72, function()
+                    local key = targetKey(targetRecord.owner, targetRecord.id)
                     if DPTL_DB.pendingTargets[key] then
                         DPTL_DB.pendingTargets[key] = nil
                         DPTL_DB.targets[key] = nil
                         info("Pending target removed locally; it was not shared.")
                     else
-                        local ok, err = sendGuild(table.concat({ "D", target.id }, "|"))
+                        local ok, err = sendGuild(table.concat({ "D", targetRecord.id }, "|"))
                         if not ok then info(err); return end
                         DPTL_DB.targets[key] = nil
                     end
@@ -433,24 +521,34 @@ refresh = function()
             end
             table.insert(ui.targetRows, rowFrame)
         end
-        ui.targetContent:SetSize(contentWidth, math.max(1, #targets * 48))
+        ui.targetContent:SetSize(contentWidth, math.max(1, #targets * 70))
         ui.targetScroll:SetVerticalScroll(0)
         local y = formTop
-        if not channelReady() then row("Join the selected sharing channel to share targets and rankings.", y); y = y - 24 end
+        local formWidth = math.min(478, bodyWidth - 16)
+        if not channelReady() then centeredLabel(ui.body, "Join the selected sharing channel to share targets and rankings.", y, formWidth); y = y - 24 end
         if ownedTargetCount(playerName()) >= MAX_TARGETS then
-            row("You have reached the limit of 3 active targets.", y)
+            centeredLabel(ui.body, "You have reached the limit of 3 active targets.", y, formWidth)
         else
-            label(ui.body, "Create target", 6, y, 100); y = y - 22
-            ui.enemy = edit(ui.body, "Enemy player", 6, y, 130)
-            ui.targetRace = dropdown(ui.body, "Race", RACES, 148, y, 130, RACES[1])
-            ui.targetClass = dropdown(ui.body, "Class", CLASSES, 292, y, 130, CLASSES[1])
+            centeredLabel(ui.body, "Create target", y, formWidth, "GameFontNormal"); y = y - 22
+            local compact = formWidth < 430
+            local enemyW, raceW, classW = compact and 96 or 124, compact and 96 or 124, compact and 96 or 124
+            local gap = compact and 6 or 10
+            local groupW = enemyW + raceW + classW + gap * 2
+            local firstX = (bodyWidth - groupW) / 2
+            ui.enemy = edit(ui.body, "Enemy player", firstX, y, enemyW)
+            ui.targetRace = dropdown(ui.body, "Race", RACES, firstX + enemyW + gap, y, raceW, RACES[1])
+            ui.targetClass = dropdown(ui.body, "Class", CLASSES, firstX + enemyW + gap + raceW + gap, y, classW, CLASSES[1])
             local fieldsY = y - 58
-            ui.gold = edit(ui.body, "Gold", 6, fieldsY, 48)
-            ui.silver = edit(ui.body, "Silver", 62, fieldsY, 48)
-            ui.copper = edit(ui.body, "Copper", 118, fieldsY, 48)
-            ui.reward = edit(ui.body, "Or reward text", 174, fieldsY, 145)
-            ui.proof = edit(ui.body, "Proof required", 328, fieldsY, 150)
-            button(ui.body, "Create", 6, fieldsY - 52, 90, function()
+            local coinW, rewardW, proofW = compact and 40 or 48, compact and 92 or 130, compact and 104 or 140
+            local fieldGap = 5
+            local fieldsW = coinW * 3 + rewardW + proofW + fieldGap * 4
+            local fieldsX = (bodyWidth - fieldsW) / 2
+            ui.gold = edit(ui.body, "Gold", fieldsX, fieldsY, coinW)
+            ui.silver = edit(ui.body, "Silver", fieldsX + coinW + fieldGap, fieldsY, coinW)
+            ui.copper = edit(ui.body, "Copper", fieldsX + (coinW + fieldGap) * 2, fieldsY, coinW)
+            ui.reward = edit(ui.body, "Or reward text", fieldsX + (coinW + fieldGap) * 3, fieldsY, rewardW)
+            ui.proof = edit(ui.body, "Proof required", fieldsX + (coinW + fieldGap) * 3 + rewardW + fieldGap, fieldsY, proofW)
+            button(ui.body, "Create", fieldsX, fieldsY - 52, 90, function()
                 local name = safe(ui.enemy:GetText(), 35)
                 local gold, silver, copper = safe(ui.gold:GetText(), 8), safe(ui.silver:GetText(), 4), safe(ui.copper:GetText(), 4)
                 local reward, proof = safe(ui.reward:GetText(), 40), safe(ui.proof:GetText(), 40)
@@ -481,28 +579,30 @@ refresh = function()
                 refresh()
             end)
         end
+        end
     else
         if ui.targetScroll then ui.targetScroll:Hide() end
-        row("Choose a window appearance:", 0)
-        button(ui.body, "Normal layout", 6, -30, 115, function()
+        local settingsLeft = (bodyWidth - 250) / 2
+        centeredLabel(ui.body, "Choose a window appearance:", 0, bodyWidth)
+        button(ui.body, "Normal layout", settingsLeft, -30, 115, function()
             DPTL_SetBlizzardLayout(false)
         end)
-        button(ui.body, "Blizzard-like", 130, -30, 115, function()
+        button(ui.body, "Blizzard-like", settingsLeft + 124, -30, 115, function()
             DPTL_SetBlizzardLayout(true)
         end)
-        dropdown(ui.body, "Sharing channel", { "Guild", "Party", "Raid" }, 6, -68, 150,
+        dropdown(ui.body, "Sharing channel", { "Guild", "Party", "Raid" }, settingsLeft, -68, 150,
             ({ GUILD = "Guild", PARTY = "Party", RAID = "Raid" })[DPTL_DB.shareChannel] or "Guild", function(value)
                 DPTL_DB.shareChannel = ({ Guild = "GUILD", Party = "PARTY", Raid = "RAID" })[value] or "GUILD"
             end)
-        button(ui.body, "Share stats", 6, -111, 100, function()
+        button(ui.body, "Share stats", settingsLeft, -111, 100, function()
             local ok, err = shareStats()
             if ok then info("Stats shared to " .. (DPTL_DB.shareChannel or "GUILD") .. ".") else info(err) end
         end)
-        button(ui.body, "DecentPVP tracker settings", 6, -148, 200, function()
+        button(ui.body, "DecentPVP tracker settings", settingsLeft, -148, 200, function()
             if DecentPVPRank_OpenSettings then DecentPVPRank_OpenSettings() end
         end)
-        row("Reports use the selected addon-message channel when the game allows sending.", -181)
-        row("Honorable kill credit is tracked automatically; Forever may not provide victim names.", -205)
+        centeredLabel(ui.body, "Reports use the selected addon-message channel when the game allows sending.", -181, bodyWidth)
+        centeredLabel(ui.body, "Honorable kill credit is tracked automatically; Forever may not provide victim names.", -205, bodyWidth)
     end
     if ui.settingsButton then
         ui.settingsButton:SetAlpha(ui.tab == "settings" and 1 or 0.82)
@@ -555,9 +655,11 @@ function DPTL_BuildGuildKillsPage(parent)
         end
     end
     local note = add(parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"))
-    note:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 6, 60); note:SetText("Honor kills are tracked automatically; victim names may not be provided by Forever.")
+    note:SetPoint("BOTTOM", parent, "BOTTOM", 0, 60); note:SetWidth(width - 12); note:SetJustifyH("CENTER")
+    note:SetText("Honor kills are tracked automatically; victim names may not be provided by Forever.")
     local box = add(CreateFrame("EditBox", nil, parent, "InputBoxTemplate"))
-    box:SetSize(180, 22); box:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 8, 26)
+    local controlsLeft = math.max(4, (width - 406) / 2)
+    box:SetSize(180, 22); box:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", controlsLeft, 26)
     box:SetAutoFocus(false); box:SetMaxLetters(48)
     local record = add(CreateFrame("Button", nil, parent, "UIPanelButtonTemplate"))
     record:SetSize(100, 24); record:SetPoint("LEFT", box, "RIGHT", 10, 0); record:SetText("Record kill")
@@ -576,15 +678,74 @@ function DPTL_BuildGuildKillsPage(parent)
     end)
 end
 
+function DPTL_BuildTargetKillsPage(parent)
+    if not parent then return end
+    for _, widget in ipairs(parent.dptlTargetWidgets or {}) do widget:Hide(); widget:SetParent(nil) end
+    parent.dptlTargetWidgets = {}
+    local function add(widget) table.insert(parent.dptlTargetWidgets, widget); return widget end
+    local width = math.max(300, parent:GetWidth())
+    local panelWidth = math.min(680, width - 12)
+    local left = (width - panelWidth) / 2
+    local columns = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
+    local columnWidth = panelWidth / 3
+    for col, category in ipairs(columns) do
+        local x = left + (col - 1) * columnWidth
+        local aggregates, totalMoney, totalKills = {}, 0, 0
+        for _, entry in pairs(DPTL_DB.targetKills or {}) do
+            local killedAt = toNumber(entry.killedAt)
+            local day = date("%Y%m%d", killedAt)
+            local week = date("%Y%W", killedAt)
+            local include = category[2] == 3 or (category[2] == 1 and day == today()) or (category[2] == 2 and week == thisWeek())
+            if include then
+                local name = entry.creditedTo or "Unknown"
+                local aggregate = aggregates[name] or { kills = 0, money = 0 }
+                aggregate.kills = aggregate.kills + 1
+                aggregate.money = aggregate.money + rewardCopper(entry.gold, entry.silver, entry.copper)
+                aggregates[name] = aggregate
+                totalMoney = totalMoney + rewardCopper(entry.gold, entry.silver, entry.copper)
+                totalKills = totalKills + 1
+            end
+        end
+        local ranking = {}
+        for name, values in pairs(aggregates) do
+            table.insert(ranking, { name = name, kills = values.kills, money = values.money })
+        end
+        table.sort(ranking, function(a, b)
+            if a.kills ~= b.kills then return a.kills > b.kills end
+            if a.money ~= b.money then return a.money > b.money end
+            return a.name < b.name
+        end)
+        local heading = add(parent:CreateFontString(nil, "ARTWORK", "GameFontNormal"))
+        heading:SetPoint("TOPLEFT", parent, "TOPLEFT", x + 4, -4)
+        heading:SetWidth(columnWidth - 8); heading:SetJustifyH("CENTER")
+        heading:SetText(category[1] .. " target kills")
+        local total = add(parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"))
+        total:SetPoint("TOPLEFT", parent, "TOPLEFT", x + 4, -24)
+        total:SetWidth(columnWidth - 8); total:SetJustifyH("CENTER")
+        total:SetText(string.format("%d kills | earned %s", totalKills, formatMoney(totalMoney)))
+        for i = 1, 10 do
+            local line = add(parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"))
+            line:SetPoint("TOPLEFT", parent, "TOPLEFT", x + 6, -48 - (i - 1) * 20)
+            line:SetWidth(columnWidth - 12); line:SetJustifyH("LEFT")
+            if ranking[i] then
+                line:SetText(string.format("%2d. %s — %d | %s", i, ranking[i].name, ranking[i].kills, formatMoney(ranking[i].money)))
+            else line:SetText("") end
+        end
+    end
+    local note = add(parent:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall"))
+    note:SetPoint("BOTTOM", parent, "BOTTOM", 0, 40)
+    note:SetText("A target kill is credited once when a member submits the report.")
+end
+
 local function buildUI()
     if ui.frame then return end
     local f = CreateFrame("Frame", "DPTLMainFrame", UIParent, "BackdropTemplate")
     ui.frame = f
-    local savedWidth = math.max(700, math.min(1300, tonumber(DPTL_DB.windowWidth) or 760))
-    local savedHeight = math.max(650, math.min(1000, tonumber(DPTL_DB.windowHeight) or 700))
+    local savedWidth = math.max(450, math.min(1300, tonumber(DPTL_DB.windowWidth) or 760))
+    local savedHeight = math.max(410, math.min(1000, tonumber(DPTL_DB.windowHeight) or 700))
     f:SetSize(savedWidth, savedHeight); f:SetPoint("CENTER"); f:SetMovable(true); f:SetResizable(true)
-    if f.SetResizeBounds then f:SetResizeBounds(700, 650, 1300, 1000)
-    else f:SetMinResize(700, 650); f:SetMaxResize(1300, 1000) end
+    if f.SetResizeBounds then f:SetResizeBounds(450, 410, 1300, 1000)
+    else f:SetMinResize(450, 410); f:SetMaxResize(1300, 1000) end
     f:SetClampedToScreen(true)
     f:EnableMouse(true); f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
@@ -595,7 +756,7 @@ local function buildUI()
     ui.headerArt:SetSize(300, 64)
     ui.headerArt:SetPoint("TOP", f, "TOP", 0, 12)
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", f, "TOPLEFT", 20, -17); title:SetText("DECENT PVP & TARGET LIST")
+    title:SetPoint("TOP", f, "TOP", 0, -17); title:SetText("DECENT PVP & TARGET LIST")
     ui.title = title
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -3, -3)
@@ -625,7 +786,6 @@ local function buildUI()
         local displayName = tabName == "pvp" and "DecentPVP" or "Guild Targets"
         local tab = CreateFrame("Button", nil, f, "BackdropTemplate")
         tab:SetSize(150, 30)
-        tab:SetPoint("TOPLEFT", f, "TOPLEFT", 20 + (i - 1) * 156, -51)
         tab:SetFrameLevel(f:GetFrameLevel() + 2)
         tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         tab.text:SetPoint("CENTER")
@@ -640,6 +800,18 @@ local function buildUI()
         tab:SetScript("OnClick", function() selectTab(tabName) end)
         ui.tabs[tabName] = tab
     end
+    local function layoutTopTabs()
+        local width = math.min(150, (f:GetWidth() - 54) / 2)
+        local gap = 8
+        for i, tabName in ipairs({ "pvp", "targets" }) do
+            local tab = ui.tabs[tabName]
+            tab:SetSize(width, 30)
+            tab:ClearAllPoints()
+            tab:SetPoint("TOP", f, "TOP", (i - 1.5) * (width + gap), -51)
+        end
+    end
+    f:HookScript("OnSizeChanged", layoutTopTabs)
+    layoutTopTabs()
     ui.body = CreateFrame("Frame", nil, f)
     ui.inset = CreateFrame("Frame", nil, f, "BackdropTemplate")
     ui.inset:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -87)
@@ -649,6 +821,21 @@ local function buildUI()
     if DecentPVPRank_EmbedInto then
         DecentPVPRank_EmbedInto(ui.body)
         if DecentPVPRank_SetEmbeddedVisible then DecentPVPRank_SetEmbeddedVisible(ui.tab == "pvp") end
+    end
+    ui.targetSubTabs = {}
+    for i, entry in ipairs({ { "active", "Active Targets" }, { "kills", "Target Kills" } }) do
+        local name, caption = entry[1], entry[2]
+        local tab = CreateFrame("Button", nil, ui.body, "BackdropTemplate")
+        tab:SetSize(132, 27)
+        tab:SetPoint("BOTTOM", ui.body, "BOTTOM", (i == 1 and -68 or 68), 3)
+        tab:SetFrameLevel(ui.body:GetFrameLevel() + 10)
+        tab.label = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        tab.label:SetPoint("CENTER"); tab.label:SetText(caption)
+        tab.active = tab:CreateTexture(nil, "OVERLAY")
+        tab.active:SetColorTexture(1, 1, 1, 0.9)
+        tab.active:SetPoint("BOTTOMLEFT", 2, 1); tab.active:SetPoint("BOTTOMRIGHT", -2, 1); tab.active:SetHeight(2)
+        tab:SetScript("OnClick", function() selectTargetPage(name) end)
+        ui.targetSubTabs[name] = tab
     end
     local resizeGrip = CreateFrame("Button", nil, f)
     resizeGrip:SetSize(16, 16)
@@ -691,6 +878,17 @@ local function onAddonMessage(prefix, message, channel, sender)
                 copper = p[6], reward = p[7], proof = p[8], created = tonumber(p[9]) or time(),
                 race = p[10], class = p[11] }
             DPTL_DB.targets[targetKey(sender, id)] = t
+            if ui.tab == "targets" then refresh() end
+        end
+    elseif p[1] == "K" and #p >= 10 then
+        local owner, id = p[2], tonumber(p[3])
+        local key = id and targetKey(owner, id)
+        if key and not DPTL_DB.targetKills[key] then
+            DPTL_DB.targetKills[key] = { owner = owner, id = id, target = p[4], creditedTo = p[5],
+                gold = p[6], silver = p[7], copper = p[8], reward = p[9],
+                killedAt = tonumber(p[10]) or time(), reporter = sender }
+            DPTL_DB.targets[key] = nil
+            DPTL_DB.pendingTargets[key] = nil
             if ui.tab == "targets" then refresh() end
         end
     elseif p[1] == "D" and #p >= 2 then
