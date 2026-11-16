@@ -4,7 +4,7 @@ local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
 local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
-local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", pendingStats = false }
+local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", pendingStats = false, pendingTargets = {} }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
     Alliance = { 0.16, 0.42, 0.88 },
@@ -37,13 +37,11 @@ local function checkRestriction(name, fn)
 end
 
 local function chatRestrictionReason()
-    local restricted, reason = checkRestriction("InCombatLockdown()", InCombatLockdown)
-    if restricted then return reason end
-    restricted, reason = checkRestriction("C_ChatInfo.InChatMessagingLockdown()",
+    -- This is the specific lockdown signal used by Forever guild-sync addons.
+    -- AreOutgoingAddonChatMessagesRestricted() can be true independently of
+    -- this state, so let SendAddonMessage report whether this send is accepted.
+    local restricted, reason = checkRestriction("C_ChatInfo.InChatMessagingLockdown()",
         C_ChatInfo and C_ChatInfo.InChatMessagingLockdown)
-    if restricted then return reason end
-    restricted, reason = checkRestriction("C_ChatInfo.AreOutgoingAddonChatMessagesRestricted()",
-        C_ChatInfo and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted)
     if restricted then return reason end
     return nil
 end
@@ -146,6 +144,19 @@ local function broadcastTarget(t)
     return sendGuild(table.concat({ "T", t.id, safe(t.name, 35), safe(t.gold, 8), safe(t.silver, 4),
         safe(t.copper, 4), safe(t.reward, 40), safe(t.proof, 40), t.created,
         safe(t.race, 20), safe(t.class, 20) }, "|"))
+end
+
+local function sharePendingTargets()
+    if not DPTL_DB or chatRestrictionReason() then return end
+    for key in pairs(DPTL_DB.pendingTargets or {}) do
+        local target = DPTL_DB.targets[key]
+        if not target then
+            DPTL_DB.pendingTargets[key] = nil
+        else
+            local ok = broadcastTarget(target)
+            if ok then DPTL_DB.pendingTargets[key] = nil else break end
+        end
+    end
 end
 
 local root = CreateFrame("Frame")
@@ -365,9 +376,16 @@ refresh = function()
                 target.owner or "Unknown", reward, target.proof or ""))
             if target.owner == playerName() then
                 local remove = button(rowFrame, "Remove", 402, -8, 64, function()
-                    local ok, err = sendGuild(table.concat({ "D", target.id }, "|"))
-                    if not ok then info(err); return end
-                    DPTL_DB.targets[targetKey(target.owner, target.id)] = nil
+                    local key = targetKey(target.owner, target.id)
+                    if DPTL_DB.pendingTargets[key] then
+                        DPTL_DB.pendingTargets[key] = nil
+                        DPTL_DB.targets[key] = nil
+                        info("Pending target removed locally; it was not shared.")
+                    else
+                        local ok, err = sendGuild(table.concat({ "D", target.id }, "|"))
+                        if not ok then info(err); return end
+                        DPTL_DB.targets[key] = nil
+                    end
                     refresh()
                 end)
                 table.insert(ui.targetRows, remove)
@@ -409,9 +427,16 @@ refresh = function()
                 local t = { id = id, owner = playerName(), name = name,
                     race = UIDropDownMenu_GetText(ui.targetRace), class = UIDropDownMenu_GetText(ui.targetClass),
                     gold = gold, silver = silver, copper = copper, reward = reward, proof = proof, created = time() }
+                local key = targetKey(t.owner, id)
+                DPTL_DB.targets[key] = t
                 local ok, err = broadcastTarget(t)
-                if not ok then info(err); return end
-                DPTL_DB.targets[targetKey(t.owner, id)] = t
+                if ok then
+                    DPTL_DB.pendingTargets[key] = nil
+                    info("Target created and shared with your guild.")
+                else
+                    DPTL_DB.pendingTargets[key] = true
+                    info("Target saved locally; guild sharing is pending. " .. err)
+                end
                 refresh()
             end)
         end
@@ -543,6 +568,14 @@ root:SetScript("OnEvent", function(self, event, ...)
         SlashCmdList.DPTL = function()
             if ui.frame:IsShown() then ui.frame:Hide() else refresh(); ui.frame:Show() end
         end
+        sharePendingStats()
+        sharePendingTargets()
+        if C_Timer and C_Timer.NewTicker then
+            C_Timer.NewTicker(30, function()
+                sharePendingStats()
+                sharePendingTargets()
+            end)
+        end
     elseif event == "CHAT_MSG_ADDON" then
         onAddonMessage(...)
     elseif event == "PLAYER_PVP_KILLS_CHANGED" then
@@ -561,6 +594,7 @@ root:SetScript("OnEvent", function(self, event, ...)
         sharePendingStats()
     elseif event == "PLAYER_REGEN_ENABLED" then
         sharePendingStats()
+        sharePendingTargets()
     end
 end)
 
