@@ -4,7 +4,7 @@ local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
 local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
-local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", pendingStats = false, pendingTargets = {}, windowWidth = 590, windowHeight = 480 }
+local DB_DEFAULTS = { kills = {}, targets = {}, nextId = 1, layout = "normal", shareChannel = "GUILD", pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
     Alliance = { 0.16, 0.42, 0.88 },
@@ -45,6 +45,13 @@ local function safe(s, max)
     return string.sub(s, 1, max or 48)
 end
 local function guildReady() return IsInGuild and IsInGuild() end
+local function channelReady()
+    local channel = DPTL_DB and DPTL_DB.shareChannel or "GUILD"
+    if channel == "GUILD" then return guildReady() end
+    if channel == "PARTY" then return IsInGroup and IsInGroup() and not (IsInRaid and IsInRaid()) end
+    if channel == "RAID" then return IsInRaid and IsInRaid() end
+    return false
+end
 local function checkRestriction(name, fn)
     if type(fn) ~= "function" then return false end
     local ok, restricted = pcall(fn)
@@ -74,14 +81,19 @@ local function sendResultName(result)
 end
 
 local function sendGuild(msg)
-    if not guildReady() then return false, "Join a guild first." end
+    local channel = DPTL_DB.shareChannel or "GUILD"
+    if channel == "GUILD" and not guildReady() then return false, "Join a guild first or choose another sharing channel." end
+    if channel == "PARTY" and (not IsInGroup or not IsInGroup() or (IsInRaid and IsInRaid())) then
+        return false, "Join a party or choose another sharing channel."
+    end
+    if channel == "RAID" and (not IsInRaid or not IsInRaid()) then return false, "Join a raid or choose another sharing channel." end
     if not C_ChatInfo or not C_ChatInfo.SendAddonMessage then
-        return false, "This client does not expose guild addon messaging."
+        return false, "This client does not expose addon messaging."
     end
     local restriction = chatRestrictionReason()
-    if restriction then return false, "Guild message blocked before sending: " .. restriction .. "." end
+    if restriction then return false, "Addon message blocked before sending: " .. restriction .. "." end
     -- Automatic reports are deferred until the client leaves combat and permits addon messages.
-    local called, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "GUILD")
+    local called, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, channel)
     if not called then return false, "C_ChatInfo.SendAddonMessage errored: " .. tostring(result) end
     if Enum and Enum.SendAddonMessageResult and result
         and result ~= Enum.SendAddonMessageResult.Success then
@@ -222,7 +234,7 @@ root:RegisterEvent("CHAT_MSG_ADDON")
 root:RegisterEvent("PLAYER_PVP_KILLS_CHANGED")
 root:RegisterEvent("PLAYER_REGEN_ENABLED")
 
-local ui = { rows = {}, tab = "kills" }
+local ui = { rows = {}, tab = "pvp" }
 local function info(text)
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff62c5ffDPTL:|r " .. text) end
 end
@@ -320,8 +332,10 @@ end
 local function selectTab(name)
     if name ~= "settings" then ui.previousTab = name end
     ui.tab = name
+    if DecentPVPRank_SetEmbeddedVisible then DecentPVPRank_SetEmbeddedVisible(name == "pvp") end
     refresh()
     styleFrame()
+    if name == "pvp" and DecentPVPRank_RefreshGuildKills then DecentPVPRank_RefreshGuildKills() end
 end
 
 local function dropdown(parent, title, values, x, y, width, initial, changed)
@@ -361,43 +375,8 @@ refresh = function()
     local bodyWidth = math.max(546, ui.body:GetWidth())
     local bodyHeight = math.max(361, ui.body:GetHeight())
     if ui.tab ~= "targets" and ui.targetScroll then ui.targetScroll:Hide() end
-    if ui.tab == "kills" then
-        label(ui.body, "Guild rankings — credited honorable kills are tracked automatically.", 6, 0, bodyWidth - 12)
-        local categories = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
-        local columnWidth = (bodyWidth - 12) / 3
-        for column, category in ipairs(categories) do
-            local x = 6 + (column - 1) * columnWidth
-            local header = label(ui.body, category[1] .. " top 10", x, -26, columnWidth - 8)
-            local list = {}
-            for name, rec in pairs(DPTL_DB.kills) do
-                local d, w, a = counts(rec)
-                table.insert(list, { name = name, value = category[2] == 1 and d or (category[2] == 2 and w or a) })
-            end
-            table.sort(list, function(a, b)
-                if a.value == b.value then return a.name < b.name end
-                return a.value > b.value
-            end)
-            for i = 1, math.min(10, #list) do
-                label(ui.body, string.format("%2d. %-16s %d", i,
-                    string.sub(list[i].name, 1, 16), list[i].value), x, -48 - (i - 1) * 23, columnWidth - 8)
-            end
-        end
-        local toolsY = -bodyHeight + 75
-        label(ui.body, "Add a missed kill manually (optional victim name).", 6, toolsY, bodyWidth - 12)
-        ui.victimBox = edit(ui.body, "Defeated player (optional)", 6, toolsY - 21, 175)
-        button(ui.body, "Record kill", 195, toolsY - 21, 96, function()
-            if InCombatLockdown and InCombatLockdown() then
-                info("Record kills after combat ends."); return
-            end
-            recordKill(ui.victimBox:GetText())
-            local ok, err = shareStats()
-            refresh()
-            if ok then info("Kill recorded and guild stats shared.") else info("Kill recorded locally. " .. err) end
-        end)
-        button(ui.body, "Share stats", 302, toolsY - 21, 96, function()
-            local ok, err = shareStats()
-            if ok then info("Guild stats shared.") else info(err) end
-        end)
+    if ui.tab == "pvp" then
+        if ui.targetScroll then ui.targetScroll:Hide() end
     elseif ui.tab == "targets" then
         row("Guild targets — only the creator can remove their entries.", 0)
         local targets = {}
@@ -457,7 +436,7 @@ refresh = function()
         ui.targetContent:SetSize(contentWidth, math.max(1, #targets * 48))
         ui.targetScroll:SetVerticalScroll(0)
         local y = formTop
-        if not guildReady() then row("Join a guild to share targets and rankings.", y); y = y - 24 end
+        if not channelReady() then row("Join the selected sharing channel to share targets and rankings.", y); y = y - 24 end
         if ownedTargetCount(playerName()) >= MAX_TARGETS then
             row("You have reached the limit of 3 active targets.", y)
         else
@@ -494,10 +473,10 @@ refresh = function()
                 local ok, err = broadcastTarget(t)
                 if ok then
                     DPTL_DB.pendingTargets[key] = nil
-                    info("Target created and shared with your guild.")
+                    info("Target created and shared to " .. (DPTL_DB.shareChannel or "GUILD") .. ".")
                 else
                     DPTL_DB.pendingTargets[key] = true
-                    info("Target saved locally; guild sharing is pending. " .. err)
+                    info("Target saved locally; sharing is pending. " .. err)
                 end
                 refresh()
             end)
@@ -506,32 +485,106 @@ refresh = function()
         if ui.targetScroll then ui.targetScroll:Hide() end
         row("Choose a window appearance:", 0)
         button(ui.body, "Normal layout", 6, -30, 115, function()
-            DPTL_DB.layout = "normal"; styleFrame()
+            DPTL_SetBlizzardLayout(false)
         end)
         button(ui.body, "Blizzard-like", 130, -30, 115, function()
-            DPTL_DB.layout = "blizzlike"; styleFrame()
+            DPTL_SetBlizzardLayout(true)
         end)
-        button(ui.body, "Share stats", 6, -68, 100, function()
+        dropdown(ui.body, "Sharing channel", { "Guild", "Party", "Raid" }, 6, -68, 150,
+            ({ GUILD = "Guild", PARTY = "Party", RAID = "Raid" })[DPTL_DB.shareChannel] or "Guild", function(value)
+                DPTL_DB.shareChannel = ({ Guild = "GUILD", Party = "PARTY", Raid = "RAID" })[value] or "GUILD"
+            end)
+        button(ui.body, "Share stats", 6, -111, 100, function()
             local ok, err = shareStats()
-            if ok then info("Guild stats shared.") else info(err) end
+            if ok then info("Stats shared to " .. (DPTL_DB.shareChannel or "GUILD") .. ".") else info(err) end
         end)
-        row("Honorable kill credit is detected automatically; victim names may not be provided by Forever.", -108)
-        row("Guild reports are shared automatically when addon messaging is allowed, after combat if needed.", -132)
+        button(ui.body, "DecentPVP tracker settings", 6, -148, 200, function()
+            if DecentPVPRank_OpenSettings then DecentPVPRank_OpenSettings() end
+        end)
+        row("Reports use the selected addon-message channel when the game allows sending.", -181)
+        row("Honorable kill credit is tracked automatically; Forever may not provide victim names.", -205)
     end
     if ui.settingsButton then
         ui.settingsButton:SetAlpha(ui.tab == "settings" and 1 or 0.82)
     end
 end
 
+function DPTL_SetBlizzardLayout(enabled)
+    DPTL_DB.layout = enabled and "blizzlike" or "normal"
+    styleFrame()
+    if DecentPVPRank_SetBlizzardUI then DecentPVPRank_SetBlizzardUI(enabled) end
+end
+
+function DPTL_OpenPVP()
+    if not ui.frame then return end
+    ui.frame:Show()
+    selectTab("pvp")
+end
+
+function DPTL_TogglePVP()
+    if not ui.frame then return end
+    if ui.frame:IsShown() and ui.tab == "pvp" then ui.frame:Hide()
+    else ui.frame:Show(); selectTab("pvp") end
+end
+
+function DPTL_BuildGuildKillsPage(parent)
+    if not parent then return end
+    for _, widget in ipairs(parent.dptlWidgets or {}) do widget:Hide(); widget:SetParent(nil) end
+    parent.dptlWidgets = {}
+    local function add(widget) table.insert(parent.dptlWidgets, widget); return widget end
+    local width = math.max(300, parent:GetWidth())
+    local columns = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
+    local colWidth = (width - 16) / 3
+    for col, category in ipairs(columns) do
+        local x = 4 + (col - 1) * colWidth
+        local header = add(parent:CreateFontString(nil, "ARTWORK", "GameFontNormal"))
+        header:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -4); header:SetWidth(colWidth - 6)
+        header:SetText(category[1] .. " top 10")
+        local ranking = {}
+        for name, rec in pairs(DPTL_DB.kills) do
+            local d, w, a = counts(rec)
+            table.insert(ranking, { name = name, value = category[2] == 1 and d or (category[2] == 2 and w or a) })
+        end
+        table.sort(ranking, function(a, b) if a.value == b.value then return a.name < b.name end return a.value > b.value end)
+        for i = 1, 10 do
+            local line = add(parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"))
+            line:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -28 - (i - 1) * 19)
+            line:SetWidth(colWidth - 6); line:SetJustifyH("LEFT")
+            if ranking[i] then line:SetText(string.format("%2d. %s  %d", i, ranking[i].name, ranking[i].value))
+            else line:SetText(string.format("%2d. —", i)) end
+        end
+    end
+    local note = add(parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"))
+    note:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 6, 60); note:SetText("Honor kills are tracked automatically; victim names may not be provided by Forever.")
+    local box = add(CreateFrame("EditBox", nil, parent, "InputBoxTemplate"))
+    box:SetSize(180, 22); box:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 8, 26)
+    box:SetAutoFocus(false); box:SetMaxLetters(48)
+    local record = add(CreateFrame("Button", nil, parent, "UIPanelButtonTemplate"))
+    record:SetSize(100, 24); record:SetPoint("LEFT", box, "RIGHT", 10, 0); record:SetText("Record kill")
+    record:SetScript("OnClick", function()
+        if InCombatLockdown and InCombatLockdown() then info("Record kills after combat ends."); return end
+        recordKill(box:GetText())
+        local ok, err = shareStats()
+        DPTL_BuildGuildKillsPage(parent)
+        if ok then info("Kill recorded and stats shared.") else info("Kill recorded locally. " .. tostring(err)) end
+    end)
+    local share = add(CreateFrame("Button", nil, parent, "UIPanelButtonTemplate"))
+    share:SetSize(100, 24); share:SetPoint("LEFT", record, "RIGHT", 8, 0); share:SetText("Share stats")
+    share:SetScript("OnClick", function()
+        local ok, err = shareStats()
+        if ok then info("Stats shared.") else info(err) end
+    end)
+end
+
 local function buildUI()
     if ui.frame then return end
     local f = CreateFrame("Frame", "DPTLMainFrame", UIParent, "BackdropTemplate")
     ui.frame = f
-    local savedWidth = math.max(590, math.min(1100, tonumber(DPTL_DB.windowWidth) or 590))
-    local savedHeight = math.max(480, math.min(900, tonumber(DPTL_DB.windowHeight) or 480))
+    local savedWidth = math.max(700, math.min(1300, tonumber(DPTL_DB.windowWidth) or 760))
+    local savedHeight = math.max(650, math.min(1000, tonumber(DPTL_DB.windowHeight) or 700))
     f:SetSize(savedWidth, savedHeight); f:SetPoint("CENTER"); f:SetMovable(true); f:SetResizable(true)
-    if f.SetResizeBounds then f:SetResizeBounds(590, 480, 1100, 900)
-    else f:SetMinResize(590, 480); f:SetMaxResize(1100, 900) end
+    if f.SetResizeBounds then f:SetResizeBounds(700, 650, 1300, 1000)
+    else f:SetMinResize(700, 650); f:SetMaxResize(1300, 1000) end
     f:SetClampedToScreen(true)
     f:EnableMouse(true); f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
@@ -554,7 +607,7 @@ local function buildUI()
     settingsButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     settingsButton:SetScript("OnClick", function()
         if ui.tab == "settings" then
-            selectTab(ui.previousTab or "kills")
+            selectTab(ui.previousTab or "pvp")
         else
             ui.previousTab = ui.tab
             selectTab("settings")
@@ -568,8 +621,8 @@ local function buildUI()
     settingsButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
     ui.settingsButton = settingsButton
     ui.tabs = {}
-    for i, tabName in ipairs({ "kills", "targets" }) do
-        local displayName = tabName == "kills" and "Kill Rankings" or "Guild Targets"
+    for i, tabName in ipairs({ "pvp", "targets" }) do
+        local displayName = tabName == "pvp" and "DecentPVP" or "Guild Targets"
         local tab = CreateFrame("Button", nil, f, "BackdropTemplate")
         tab:SetSize(150, 30)
         tab:SetPoint("TOPLEFT", f, "TOPLEFT", 20 + (i - 1) * 156, -51)
@@ -593,6 +646,10 @@ local function buildUI()
     ui.inset:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 12)
     ui.body:SetPoint("TOPLEFT", ui.inset, "TOPLEFT", 10, -10)
     ui.body:SetPoint("BOTTOMRIGHT", ui.inset, "BOTTOMRIGHT", -10, 10)
+    if DecentPVPRank_EmbedInto then
+        DecentPVPRank_EmbedInto(ui.body)
+        if DecentPVPRank_SetEmbeddedVisible then DecentPVPRank_SetEmbeddedVisible(ui.tab == "pvp") end
+    end
     local resizeGrip = CreateFrame("Button", nil, f)
     resizeGrip:SetSize(16, 16)
     resizeGrip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -5, 5)
@@ -608,6 +665,7 @@ local function buildUI()
         local width, height = f:GetSize()
         DPTL_DB.windowWidth, DPTL_DB.windowHeight = math.floor(width + 0.5), math.floor(height + 0.5)
         refresh()
+        if DecentPVPRank_ResizeEmbedded then DecentPVPRank_ResizeEmbedded() end
     end)
     ui.resizeGrip = resizeGrip
     refresh()
@@ -615,7 +673,7 @@ local function buildUI()
 end
 
 local function onAddonMessage(prefix, message, channel, sender)
-    if prefix ~= PREFIX or channel ~= "GUILD" or not sender then return end
+    if prefix ~= PREFIX or (channel ~= "GUILD" and channel ~= "PARTY" and channel ~= "RAID") or not sender then return end
     if isPlayerSender(sender) then return end
     sender = string.gsub(sender, "%-.*$", "")
     local p = split(message)
@@ -625,10 +683,10 @@ local function onAddonMessage(prefix, message, channel, sender)
         rec.weekly = { [p[3]] = toNumber(p[5]) }
         rec.total = toNumber(p[6]); rec.receivedAt = time()
         DPTL_DB.kills[sender] = rec
-        if ui.tab == "kills" then refresh() end
+        if DecentPVPRank_RefreshGuildKills then DecentPVPRank_RefreshGuildKills() end
     elseif p[1] == "T" and #p >= 11 then
         local id = tonumber(p[2])
-        if id and ownedTargetCount(sender) < MAX_TARGETS then
+        if id and (DPTL_DB.targets[targetKey(sender, id)] or ownedTargetCount(sender) < MAX_TARGETS) then
             local t = { id = id, owner = sender, name = p[3], gold = p[4], silver = p[5],
                 copper = p[6], reward = p[7], proof = p[8], created = tonumber(p[9]) or time(),
                 race = p[10], class = p[11] }
@@ -688,7 +746,7 @@ root:SetScript("OnEvent", function(self, event, ...)
         recordKill(victim or "")
         syncLifetimeKills()
         DPTL_DB.pendingStats = true
-        if ui.tab == "kills" then refresh() end
+        if DecentPVPRank_RefreshGuildKills then DecentPVPRank_RefreshGuildKills() end
         sharePendingStats()
     elseif event == "PLAYER_REGEN_ENABLED" then
         sharePendingStats()

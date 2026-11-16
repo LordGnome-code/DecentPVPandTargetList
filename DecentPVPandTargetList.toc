@@ -2,9 +2,12 @@
 ## Title: Decent PvP and Target List
 ## Notes: Guild PvP kill rankings and player target board for WoW Forever.
 ## Author: LordGnome
-## Version: 1.0.3
-## SavedVariables: DPTL_DB
+## Version: 1.1.0
+## SavedVariables: DPTL_DB, DecentPVPRankDB
+## OptionalDeps: ElvUI
 ## AddonCompartmentFunc: DPTL_AddonCompartmentClick
 ## AddonCompartmentIcon: Interface\Icons\INV_Misc_Head_Orc_01
 
 DecentPVPandTargetList.lua
+DecentPVPRank.lua
+PlayerTooltips.lua
