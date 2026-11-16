@@ -19,7 +19,7 @@ A guild PvP addon for **WoW Forever** (interface 16001). It has no external libr
 - Rewards can be entered as gold, silver, and copper or as free-form text.
 - Each character can maintain up to three active targets; only the character that created a target can cancel it. A member can enter a name to credit, then record and remove an eliminated target.
 - The **Target Kills** subtab shows daily, weekly, and lifetime target eliminations and coin rewards by credited player.
-- Uses Horde red or Alliance blue accents, centered main tabs and title, and a top-right Settings toggle. The window can be resized down to 450 × 410 pixels, and its page contents scale up or down with the window.
+- Uses Horde red or Alliance blue accents, centered main tabs and title, and a top-right Settings toggle. The window can be resized down to 474 × 468 pixels; page contents scale between 60% and 160% so text stays readable.
 - Offers a compact faction-colored layout and a distinct Blizzard-like rock frame, marble inset, and header artwork under Settings.
 - Adds a Troll head icon that toggles the main window. IconBag - Forever collects Addon Compartment entries into its icon drawer.
 

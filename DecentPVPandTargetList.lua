@@ -2,6 +2,10 @@
 local ADDON, ns = ...
 local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
+local BODY_WIDTH, BODY_HEIGHT = 716, 581
+local MIN_BODY_SCALE, MAX_BODY_SCALE = 0.6, 1.6
+local MIN_WINDOW_WIDTH = math.ceil(BODY_WIDTH * MIN_BODY_SCALE + 44)
+local MIN_WINDOW_HEIGHT = math.ceil(BODY_HEIGHT * MIN_BODY_SCALE + 119)
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
 local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
 local DB_DEFAULTS = { kills = {}, targets = {}, targetKills = {}, nextId = 1, layout = "modernblizz", pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
@@ -797,11 +801,11 @@ local function buildUI()
     if ui.frame then return end
     local f = CreateFrame("Frame", "DPTLMainFrame", UIParent, "BackdropTemplate")
     ui.frame = f
-    local savedWidth = math.max(450, math.min(1300, tonumber(DPTL_DB.windowWidth) or 760))
-    local savedHeight = math.max(410, math.min(1000, tonumber(DPTL_DB.windowHeight) or 700))
+    local savedWidth = math.max(MIN_WINDOW_WIDTH, math.min(1300, tonumber(DPTL_DB.windowWidth) or 760))
+    local savedHeight = math.max(MIN_WINDOW_HEIGHT, math.min(1000, tonumber(DPTL_DB.windowHeight) or 700))
     f:SetSize(savedWidth, savedHeight); f:SetPoint("CENTER"); f:SetMovable(true); f:SetResizable(true)
-    if f.SetResizeBounds then f:SetResizeBounds(450, 410, 1300, 1000)
-    else f:SetMinResize(450, 410); f:SetMaxResize(1300, 1000) end
+    if f.SetResizeBounds then f:SetResizeBounds(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, 1300, 1000)
+    else f:SetMinResize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT); f:SetMaxResize(1300, 1000) end
     f:SetClampedToScreen(true)
     f:EnableMouse(true); f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
@@ -892,10 +896,10 @@ local function buildUI()
         local availableHeight = ui.inset:GetHeight() - 20
         if availableWidth < 1 then availableWidth = f:GetWidth() - 44 end
         if availableHeight < 1 then availableHeight = f:GetHeight() - 119 end
-        local scale = math.min(1.6, availableWidth / 716, availableHeight / 581)
-        scale = math.max(0.4, scale)
+        local scale = math.min(MAX_BODY_SCALE, availableWidth / BODY_WIDTH, availableHeight / BODY_HEIGHT)
+        scale = math.max(MIN_BODY_SCALE, scale)
         ui.body:ClearAllPoints()
-        ui.body:SetSize(716, 581)
+        ui.body:SetSize(BODY_WIDTH, BODY_HEIGHT)
         ui.body:SetScale(scale)
         ui.body:SetPoint("CENTER", ui.inset, "CENTER")
     end
