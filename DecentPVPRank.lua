@@ -15,6 +15,7 @@ local syncTrackers
 local syncingTrackers
 local appliedBlizzardStyle
 local embeddedMode, embeddedParent = false, nil
+local embeddedForgeStyle = false
 local function resizeExtraBars()
     for key, b in pairs(extraBars) do
         local size = db.extraSizes[key]
@@ -170,8 +171,9 @@ local function setBar(b, value, maximum, label)
 end
 local function toggle(f) f:SetShown(not f:IsShown()) end
 local function applyLayout()
-    if appliedBlizzardStyle == db.blizzardUI and not embeddedMode then return end
-    appliedBlizzardStyle = db.blizzardUI
+    local styleKey = tostring(db.blizzardUI) .. ":" .. tostring(embeddedForgeStyle)
+    if appliedBlizzardStyle == styleKey and not embeddedMode then return end
+    appliedBlizzardStyle = styleKey
     local classic = db.blizzardUI
     for _, f in ipairs({ window, settings, mini }) do
         f:SetBackdrop(classic and {
@@ -253,7 +255,8 @@ local function applyLayout()
     window.miniButton:SetShown(not embeddedMode)
 end
 applyTheme = function()
-    local color = db.color or themes[UnitFactionGroup("player")] or themes.Alliance
+    local color = embeddedForgeStyle and { .62, .43, .22 }
+        or db.color or themes[UnitFactionGroup("player")] or themes.Alliance
     applyLayout()
     for _, f in ipairs({ window, settings, mini }) do
         if f then
@@ -1009,6 +1012,12 @@ function DecentPVPRank_SetBlizzardUI(enabled)
         appliedBlizzardStyle = nil
         applyTheme()
     end
+end
+
+function DecentPVPRank_SetForgeUI(enabled)
+    embeddedForgeStyle = enabled and true or false
+    appliedBlizzardStyle = nil
+    if db then applyTheme() end
 end
 
 function DecentPVPRank_OpenSettings()

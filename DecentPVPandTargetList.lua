@@ -4,7 +4,7 @@ local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
 local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
-local DB_DEFAULTS = { kills = {}, targets = {}, targetKills = {}, nextId = 1, layout = "normal", shareChannel = "GUILD", pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
+local DB_DEFAULTS = { kills = {}, targets = {}, targetKills = {}, nextId = 1, layout = "forge", shareChannel = "GUILD", pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
     Alliance = { 0.16, 0.42, 0.88 },
@@ -38,7 +38,25 @@ local function isPlayerSender(sender)
     return withoutRealm == short or withoutRealm == full
 end
 local function today() return date("%Y%m%d") end
-local function thisWeek() return date("%Y%W") end
+local function currentWeekStart()
+    local now = GetServerTime and GetServerTime() or time()
+    local resetFn = C_DateAndTime and C_DateAndTime.GetSecondsUntilWeeklyReset
+    if type(resetFn) == "function" then
+        local ok, remaining = pcall(resetFn)
+        if ok and type(remaining) == "number" and (not issecretvalue or not issecretvalue(remaining)) and remaining >= 0 then
+            return now + remaining - 604800
+        end
+    end
+    -- Forever's weekly reset is Tuesday. Use UTC for a stable key across clients.
+    local weekday = tonumber(date("!%w", now)) or 0
+    return now - ((weekday - 2) % 7) * 86400
+end
+local function thisWeek() return date("!%Y%W", currentWeekStart()) end
+local function weekKeyAt(timestamp, start)
+    start = start or currentWeekStart()
+    local weeksFromCurrent = math.floor((timestamp - start) / 604800)
+    return date("!%Y%W", start + weeksFromCurrent * 604800)
+end
 local function safe(s, max)
     s = tostring(s or "")
     s = string.gsub(s, "[|\r\n]", " ")
@@ -149,7 +167,7 @@ local function sharePendingStats()
     if ok then DPTL_DB.pendingStats = false end
 end
 
-local function recordKill(victim)
+local function recordKill()
     local rec = ownStats()
     local d, w = today(), thisWeek()
     rec.total = toNumber(rec.total) + 1
@@ -157,9 +175,17 @@ local function recordKill(victim)
     rec.weekly[w] = toNumber(rec.weekly[w]) + 1
     for key in pairs(rec.daily) do if key ~= d then rec.daily[key] = nil end end
     for key in pairs(rec.weekly) do if key ~= w then rec.weekly[key] = nil end end
-    rec.lastVictim = safe(victim, 35)
-    rec.lastKill = time()
     syncLifetimeKills()
+end
+
+local function migrateWeeklyBuckets()
+    local oldWeek, currentWeek = date("%Y%W"), thisWeek()
+    for _, rec in pairs(DPTL_DB.kills or {}) do
+        rec.weekly = rec.weekly or {}
+        local current = rec.weekly[currentWeek]
+        if current == nil then current = rec.weekly[oldWeek] end
+        rec.weekly = current ~= nil and { [currentWeek] = current } or {}
+    end
 end
 
 local function targetKey(owner, id) return owner .. ":" .. tostring(id) end
@@ -307,6 +333,7 @@ local function styleFrame()
     local faction = UnitFactionGroup and UnitFactionGroup("player") or "Alliance"
     local accent = factionThemes[faction] or factionThemes.Alliance
     local blizzard = DPTL_DB.layout == "blizzlike"
+    local forge = DPTL_DB.layout == "forge"
     if blizzard then
         ui.frame:SetBackdrop({ bgFile = "Interface\\FrameGeneral\\UI-Background-Rock",
             edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true,
@@ -320,6 +347,25 @@ local function styleFrame()
         ui.inset:SetBackdropBorderColor(0.72, 0.72, 0.72, 1)
         ui.headerArt:Show()
         ui.title:SetTextColor(1, 0.82, 0)
+        ui.title:SetParent(ui.frame)
+        ui.title:ClearAllPoints()
+        ui.title:SetPoint("TOP", ui.frame, "TOP", 0, -17)
+        ui.titleBar:Hide()
+    elseif forge then
+        ui.frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+        ui.frame:SetBackdropColor(0.035, 0.032, 0.028, 0.99)
+        ui.frame:SetBackdropBorderColor(0.62, 0.43, 0.22, 0.95)
+        ui.inset:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        ui.inset:SetBackdropColor(0.075, 0.068, 0.058, 0.99)
+        ui.inset:SetBackdropBorderColor(0.34, 0.27, 0.19, 0.95)
+        ui.headerArt:Hide()
+        ui.titleBar:Show()
+        ui.title:SetParent(ui.titleBar)
+        ui.title:ClearAllPoints()
+        ui.title:SetPoint("CENTER", ui.titleBar, "CENTER", 0, 0)
+        ui.title:SetTextColor(0.91, 0.78, 0.55)
     else
         ui.frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
             edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
@@ -332,6 +378,10 @@ local function styleFrame()
             accent[3] * 0.09 + 0.025, 0.98)
         ui.inset:SetBackdropBorderColor(accent[1], accent[2], accent[3], 0.8)
         ui.headerArt:Hide()
+        ui.titleBar:Hide()
+        ui.title:SetParent(ui.frame)
+        ui.title:ClearAllPoints()
+        ui.title:SetPoint("TOP", ui.frame, "TOP", 0, -17)
         ui.title:SetTextColor(0.96, 0.9, 0.82)
     end
     for name, tab in pairs(ui.tabs or {}) do
@@ -341,14 +391,17 @@ local function styleFrame()
             tab.text:SetTextColor(1, active and 1 or 0.78, active and 1 or 0.5)
             tab.active:SetShown(active)
         else
+            local tabAccent = forge and { 0.62, 0.43, 0.22 } or accent
             tab:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
                 edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-            tab:SetBackdropColor(active and accent[1] * 0.22 + 0.04 or 0.035,
-                active and accent[2] * 0.22 + 0.04 or 0.035,
-                active and accent[3] * 0.22 + 0.04 or 0.04, 1)
-            tab:SetBackdropBorderColor(active and accent[1] or 0.25,
-                active and accent[2] or 0.25, active and accent[3] or 0.28, 1)
-            tab.text:SetTextColor(active and 1 or 0.7, active and 0.92 or 0.7, active and 0.72 or 0.7)
+            tab:SetBackdropColor(active and tabAccent[1] * 0.22 + 0.04 or 0.035,
+                active and tabAccent[2] * 0.22 + 0.04 or 0.035,
+                active and tabAccent[3] * 0.22 + 0.04 or 0.04, 1)
+            tab:SetBackdropBorderColor(active and tabAccent[1] or 0.25,
+                active and tabAccent[2] or 0.25, active and tabAccent[3] or 0.28, 1)
+            tab.text:SetTextColor(active and 1 or (forge and 0.91 or 0.7),
+                active and (forge and 0.82 or 0.92) or (forge and 0.74 or 0.7),
+                active and (forge and 0.64 or 0.72) or (forge and 0.56 or 0.7))
             tab.active:SetShown(false)
         end
     end
@@ -359,12 +412,15 @@ local function styleFrame()
             tab.label:SetTextColor(1, active and 1 or 0.78, active and 1 or 0.5)
             tab.active:SetShown(active)
         else
+            local tabAccent = forge and { 0.62, 0.43, 0.22 } or accent
             tab:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-            tab:SetBackdropColor(active and accent[1] * 0.22 + 0.04 or 0.035,
-                active and accent[2] * 0.22 + 0.04 or 0.035, active and accent[3] * 0.22 + 0.04 or 0.04, 1)
-            tab:SetBackdropBorderColor(active and accent[1] or 0.25, active and accent[2] or 0.25,
-                active and accent[3] or 0.28, 1)
-            tab.label:SetTextColor(active and 1 or 0.7, active and 0.92 or 0.7, active and 0.72 or 0.7)
+            tab:SetBackdropColor(active and tabAccent[1] * 0.22 + 0.04 or 0.035,
+                active and tabAccent[2] * 0.22 + 0.04 or 0.035, active and tabAccent[3] * 0.22 + 0.04 or 0.04, 1)
+            tab:SetBackdropBorderColor(active and tabAccent[1] or 0.25, active and tabAccent[2] or 0.25,
+                active and tabAccent[3] or 0.28, 1)
+            tab.label:SetTextColor(active and 1 or (forge and 0.91 or 0.7),
+                active and (forge and 0.82 or 0.92) or (forge and 0.74 or 0.7),
+                active and (forge and 0.64 or 0.72) or (forge and 0.56 or 0.7))
             tab.active:Hide()
         end
     end
@@ -468,7 +524,10 @@ refresh = function()
             local atlas = target.class and ("class-icon-" .. string.lower(target.class:gsub(" ", "")))
             if atlas and classIcon.SetAtlas then classIcon:SetAtlas(atlas) else classIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
             local reward = target.reward
-            if reward == "" then reward = string.format("%sg %ss %sc", target.gold, target.silver, target.copper) end
+            if reward == "" then
+                reward = string.format("%s |TInterface\\MoneyFrame\\UI-GoldIcon:12:12:0:0|t   %s |TInterface\\MoneyFrame\\UI-SilverIcon:12:12:0:0|t   %s |TInterface\\MoneyFrame\\UI-CopperIcon:12:12:0:0|t",
+                    target.gold, target.silver, target.copper)
+            end
             local details = rowFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
             details:SetPoint("TOPLEFT", classIcon, "TOPRIGHT", 7, 0)
             details:SetWidth(math.max(100, contentWidth - 260)); details:SetJustifyH("LEFT")
@@ -582,13 +641,16 @@ refresh = function()
         end
     else
         if ui.targetScroll then ui.targetScroll:Hide() end
-        local settingsLeft = (bodyWidth - 250) / 2
+        local settingsLeft = (bodyWidth - 340) / 2
         centeredLabel(ui.body, "Choose a window appearance:", 0, bodyWidth)
-        button(ui.body, "Normal layout", settingsLeft, -30, 115, function()
-            DPTL_SetBlizzardLayout(false)
+        button(ui.body, "Normal", settingsLeft, -30, 100, function()
+            DPTL_SetLayout("normal")
         end)
-        button(ui.body, "Blizzard-like", settingsLeft + 124, -30, 115, function()
-            DPTL_SetBlizzardLayout(true)
+        button(ui.body, "Blizzard-like", settingsLeft + 112, -30, 106, function()
+            DPTL_SetLayout("blizzlike")
+        end)
+        button(ui.body, "ForeverForge", settingsLeft + 230, -30, 110, function()
+            DPTL_SetLayout("forge")
         end)
         dropdown(ui.body, "Sharing channel", { "Guild", "Party", "Raid" }, settingsLeft, -68, 150,
             ({ GUILD = "Guild", PARTY = "Party", RAID = "Raid" })[DPTL_DB.shareChannel] or "Guild", function(value)
@@ -609,10 +671,16 @@ refresh = function()
     end
 end
 
-function DPTL_SetBlizzardLayout(enabled)
-    DPTL_DB.layout = enabled and "blizzlike" or "normal"
+function DPTL_SetLayout(layout)
+    if layout ~= "normal" and layout ~= "blizzlike" and layout ~= "forge" then layout = "forge" end
+    DPTL_DB.layout = layout
     styleFrame()
-    if DecentPVPRank_SetBlizzardUI then DecentPVPRank_SetBlizzardUI(enabled) end
+    if DecentPVPRank_SetBlizzardUI then DecentPVPRank_SetBlizzardUI(layout == "blizzlike") end
+    if DecentPVPRank_SetForgeUI then DecentPVPRank_SetForgeUI(layout == "forge") end
+end
+
+function DPTL_SetBlizzardLayout(enabled)
+    DPTL_SetLayout(enabled and "blizzlike" or "normal")
 end
 
 function DPTL_OpenPVP()
@@ -656,22 +724,9 @@ function DPTL_BuildGuildKillsPage(parent)
     end
     local note = add(parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"))
     note:SetPoint("BOTTOM", parent, "BOTTOM", 0, 60); note:SetWidth(width - 12); note:SetJustifyH("CENTER")
-    note:SetText("Honor kills are tracked automatically; victim names may not be provided by Forever.")
-    local box = add(CreateFrame("EditBox", nil, parent, "InputBoxTemplate"))
-    local controlsLeft = math.max(4, (width - 406) / 2)
-    box:SetSize(180, 22); box:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", controlsLeft, 26)
-    box:SetAutoFocus(false); box:SetMaxLetters(48)
-    local record = add(CreateFrame("Button", nil, parent, "UIPanelButtonTemplate"))
-    record:SetSize(100, 24); record:SetPoint("LEFT", box, "RIGHT", 10, 0); record:SetText("Record kill")
-    record:SetScript("OnClick", function()
-        if InCombatLockdown and InCombatLockdown() then info("Record kills after combat ends."); return end
-        recordKill(box:GetText())
-        local ok, err = shareStats()
-        DPTL_BuildGuildKillsPage(parent)
-        if ok then info("Kill recorded and stats shared.") else info("Kill recorded locally. " .. tostring(err)) end
-    end)
+    note:SetText("Honorable kills are tracked automatically by the game.")
     local share = add(CreateFrame("Button", nil, parent, "UIPanelButtonTemplate"))
-    share:SetSize(100, 24); share:SetPoint("LEFT", record, "RIGHT", 8, 0); share:SetText("Share stats")
+    share:SetSize(100, 24); share:SetPoint("BOTTOM", parent, "BOTTOM", 0, 26); share:SetText("Share stats")
     share:SetScript("OnClick", function()
         local ok, err = shareStats()
         if ok then info("Stats shared.") else info(err) end
@@ -686,6 +741,7 @@ function DPTL_BuildTargetKillsPage(parent)
     local width = math.max(300, parent:GetWidth())
     local panelWidth = math.min(680, width - 12)
     local left = (width - panelWidth) / 2
+    local weekStart = currentWeekStart()
     local columns = { { "Daily", 1 }, { "Weekly", 2 }, { "All time", 3 } }
     local columnWidth = panelWidth / 3
     for col, category in ipairs(columns) do
@@ -694,7 +750,7 @@ function DPTL_BuildTargetKillsPage(parent)
         for _, entry in pairs(DPTL_DB.targetKills or {}) do
             local killedAt = toNumber(entry.killedAt)
             local day = date("%Y%m%d", killedAt)
-            local week = date("%Y%W", killedAt)
+            local week = weekKeyAt(killedAt, weekStart)
             local include = category[2] == 3 or (category[2] == 1 and day == today()) or (category[2] == 2 and week == thisWeek())
             if include then
                 local name = entry.creditedTo or "Unknown"
@@ -755,6 +811,16 @@ local function buildUI()
     ui.headerArt:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Header")
     ui.headerArt:SetSize(300, 64)
     ui.headerArt:SetPoint("TOP", f, "TOP", 0, 12)
+    ui.titleBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    ui.titleBar:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -7)
+    ui.titleBar:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -7)
+    ui.titleBar:SetHeight(30)
+    ui.titleBar:SetFrameLevel(f:GetFrameLevel() + 1)
+    ui.titleBar:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    ui.titleBar:SetBackdropColor(0.10, 0.088, 0.071, 1)
+    ui.titleBar:SetBackdropBorderColor(0.39, 0.30, 0.20, 1)
+    ui.titleBar:Hide()
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", f, "TOP", 0, -17); title:SetText("DECENT PVP & TARGET LIST")
     ui.title = title
@@ -781,6 +847,8 @@ local function buildUI()
     end)
     settingsButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
     ui.settingsButton = settingsButton
+    close:SetFrameLevel(f:GetFrameLevel() + 6)
+    settingsButton:SetFrameLevel(f:GetFrameLevel() + 6)
     ui.tabs = {}
     for i, tabName in ipairs({ "pvp", "targets" }) do
         local displayName = tabName == "pvp" and "DecentPVP" or "Guild Targets"
@@ -816,10 +884,25 @@ local function buildUI()
     ui.inset = CreateFrame("Frame", nil, f, "BackdropTemplate")
     ui.inset:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -87)
     ui.inset:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 12)
-    ui.body:SetPoint("TOPLEFT", ui.inset, "TOPLEFT", 10, -10)
-    ui.body:SetPoint("BOTTOMRIGHT", ui.inset, "BOTTOMRIGHT", -10, 10)
+    local function layoutBodyContent()
+        local availableWidth = ui.inset:GetWidth() - 20
+        local availableHeight = ui.inset:GetHeight() - 20
+        if availableWidth < 1 then availableWidth = f:GetWidth() - 44 end
+        if availableHeight < 1 then availableHeight = f:GetHeight() - 119 end
+        local scale = math.min(1.6, availableWidth / 716, availableHeight / 581)
+        scale = math.max(0.4, scale)
+        ui.body:ClearAllPoints()
+        ui.body:SetSize(716, 581)
+        ui.body:SetScale(scale)
+        ui.body:SetPoint("CENTER", ui.inset, "CENTER")
+        ui.contentScale = scale
+    end
+    layoutBodyContent()
+    f:HookScript("OnSizeChanged", layoutBodyContent)
     if DecentPVPRank_EmbedInto then
         DecentPVPRank_EmbedInto(ui.body)
+        if DecentPVPRank_SetForgeUI then DecentPVPRank_SetForgeUI(DPTL_DB.layout == "forge") end
+        if DecentPVPRank_SetBlizzardUI then DecentPVPRank_SetBlizzardUI(DPTL_DB.layout == "blizzlike") end
         if DecentPVPRank_SetEmbeddedVisible then DecentPVPRank_SetEmbeddedVisible(ui.tab == "pvp") end
     end
     ui.targetSubTabs = {}
@@ -851,6 +934,7 @@ local function buildUI()
         f:StopMovingOrSizing()
         local width, height = f:GetSize()
         DPTL_DB.windowWidth, DPTL_DB.windowHeight = math.floor(width + 0.5), math.floor(height + 0.5)
+        layoutBodyContent()
         refresh()
         if DecentPVPRank_ResizeEmbedded then DecentPVPRank_ResizeEmbedded() end
     end)
@@ -912,6 +996,7 @@ root:SetScript("OnEvent", function(self, event, ...)
         syncLifetimeKills()
     elseif event == "PLAYER_LOGIN" then
         migratePlayerIdentity()
+        migrateWeeklyBuckets()
         syncLifetimeKills()
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
             C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
@@ -933,15 +1018,8 @@ root:SetScript("OnEvent", function(self, event, ...)
     elseif event == "CHAT_MSG_ADDON" then
         onAddonMessage(...)
     elseif event == "PLAYER_PVP_KILLS_CHANGED" then
-        -- This event represents the player's own honorable kill credit. Forever may
-        -- withhold the victim name, so only store a name if the event's unit token resolves safely.
-        local unitTarget = ...
-        local victim
-        if type(unitTarget) == "string" then
-            local ok, name = pcall(UnitName, unitTarget)
-            if ok and type(name) == "string" and name ~= "" then victim = name end
-        end
-        recordKill(victim or "")
+        -- Track the count from the game's honorable-kill event; target names are not required.
+        recordKill()
         syncLifetimeKills()
         DPTL_DB.pendingStats = true
         if DecentPVPRank_RefreshGuildKills then DecentPVPRank_RefreshGuildKills() end
