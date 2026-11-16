@@ -1092,6 +1092,10 @@ function DecentPVPRank_OpenSettings()
     if openSettings then openSettings() end
 end
 
+function DecentPVPRank_CloseSettings()
+    if settings then settings:Hide() end
+end
+
 function DecentPVPRank_RefreshGuildKills()
     if embeddedMode and selectedTab == "Guild Kills" and window.pages["Guild Kills"]
         and type(DPTL_BuildGuildKillsPage) == "function" then

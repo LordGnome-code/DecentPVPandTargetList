@@ -297,7 +297,7 @@ local function settingButton(parent, text, x, y, width, action)
     local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     b:SetSize(width, 24); b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
     b:SetText(text); b:SetScript("OnClick", action)
-    return b
+    return track(b)
 end
 local function row(text, y)
     local fs = ui.body:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -423,6 +423,11 @@ end
 local function selectTab(name)
     if name ~= "settings" then ui.previousTab = name end
     ui.tab = name
+    -- The tracker options are a separate frame. Keep them scoped to the host
+    -- Settings tab so they cannot linger over PvP or Target List pages.
+    if name ~= "settings" and DecentPVPRank_CloseSettings then
+        DecentPVPRank_CloseSettings()
+    end
     if DecentPVPRank_SetEmbeddedVisible then DecentPVPRank_SetEmbeddedVisible(name == "pvp") end
     refresh()
     styleFrame()
@@ -801,6 +806,9 @@ local function buildUI()
     f:EnableMouse(true); f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
     f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    f:HookScript("OnHide", function()
+        if DecentPVPRank_CloseSettings then DecentPVPRank_CloseSettings() end
+    end)
     f:Hide()
     ui.headerArt = f:CreateTexture(nil, "BACKGROUND")
     ui.headerArt:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Header")
