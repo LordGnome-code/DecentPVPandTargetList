@@ -4,6 +4,7 @@ local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
 local BODY_WIDTH, BODY_HEIGHT = 716, 581
 local MIN_BODY_SCALE, MAX_BODY_SCALE = 0.6, 1.6
+local FONT_SIZE_BOOST = 1.15
 local MIN_WINDOW_WIDTH = math.ceil(BODY_WIDTH * MIN_BODY_SCALE + 44)
 local MIN_WINDOW_HEIGHT = math.ceil(BODY_HEIGHT * MIN_BODY_SCALE + 119)
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
@@ -281,6 +282,23 @@ local function clearRows()
     end
     ui.rows = {}
 end
+local function enlargeFontTree(frame)
+    local bodyScale = ui.body and ui.body:GetScale() or 1
+    local fontBoost = math.min(FONT_SIZE_BOOST, MAX_BODY_SCALE / math.max(bodyScale, 0.01))
+    local regions = { frame:GetRegions() }
+    for _, region in ipairs(regions) do
+        if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+            if not region.dptlBaseFont then
+                local path, size, flags = region:GetFont()
+                if path and size then region.dptlBaseFont = { path, size, flags or "" } end
+            end
+            local base = region.dptlBaseFont
+            if base then region:SetFont(base[1], base[2] * fontBoost, base[3]) end
+        end
+    end
+    local children = { frame:GetChildren() }
+    for _, child in ipairs(children) do enlargeFontTree(child) end
+end
 local function label(parent, text, x, y, width, font)
     local fs = parent:CreateFontString(nil, "ARTWORK", font or "GameFontHighlightSmall")
     fs:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
@@ -436,6 +454,7 @@ local function selectTab(name)
     refresh()
     styleFrame()
     if name == "pvp" and DecentPVPRank_RefreshGuildKills then DecentPVPRank_RefreshGuildKills() end
+    if ui.frame then enlargeFontTree(ui.frame) end
 end
 
 local function selectTargetPage(name)
@@ -668,6 +687,7 @@ refresh = function()
     if ui.settingsButton then
         ui.settingsButton:SetAlpha(ui.tab == "settings" and 1 or 0.82)
     end
+    if ui.frame then enlargeFontTree(ui.frame) end
 end
 
 function DPTL_SetLayout(layout)
@@ -865,6 +885,19 @@ local function buildUI()
         tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         tab.text:SetPoint("CENTER")
         tab.text:SetText(displayName)
+        local iconPath = tabName == "pvp"
+            and "Interface\\Icons\\Ability_DualWield"
+            or "Interface\\Icons\\INV_Weapon_ShortBlade_01"
+        local iconSize = tabName == "pvp" and 18 or 14
+        tab.leftIcon = tab:CreateTexture(nil, "ARTWORK")
+        tab.leftIcon:SetTexture(iconPath)
+        tab.leftIcon:SetSize(iconSize, iconSize)
+        tab.leftIcon:SetPoint("RIGHT", tab.text, "LEFT", -4, 0)
+        tab.leftIcon:SetTexCoord(1, 0, 0, 1)
+        tab.rightIcon = tab:CreateTexture(nil, "ARTWORK")
+        tab.rightIcon:SetTexture(iconPath)
+        tab.rightIcon:SetSize(iconSize, iconSize)
+        tab.rightIcon:SetPoint("LEFT", tab.text, "RIGHT", 4, 0)
         tab:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
         tab:GetHighlightTexture():SetAlpha(0.06)
         tab.active = tab:CreateTexture(nil, "OVERLAY")
@@ -875,6 +908,7 @@ local function buildUI()
         tab:SetScript("OnClick", function() selectTab(tabName) end)
         ui.tabs[tabName] = tab
     end
+    enlargeFontTree(f)
     local function layoutTopTabs()
         local width = math.min(150, (f:GetWidth() - 54) / 2)
         local gap = 8
@@ -947,6 +981,7 @@ local function buildUI()
     ui.resizeGrip = resizeGrip
     refresh()
     styleFrame()
+    enlargeFontTree(f)
 end
 
 local function onAddonMessage(prefix, message, channel, sender)
