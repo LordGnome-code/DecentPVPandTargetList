@@ -4,7 +4,7 @@ local PREFIX = "DPTL2"
 local MAX_TARGETS = 3
 local RACES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll", "Blood Elf", "Draenei" }
 local CLASSES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight", "Shaman", "Mage", "Warlock", "Monk", "Druid", "Demon Hunter", "Evoker" }
-local DB_DEFAULTS = { kills = {}, targets = {}, targetKills = {}, nextId = 1, layout = "forge", shareChannel = "GUILD", pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
+local DB_DEFAULTS = { kills = {}, targets = {}, targetKills = {}, nextId = 1, layout = "modernblizz", fontScale = 1, pendingStats = false, pendingTargets = {}, windowWidth = 760, windowHeight = 700 }
 local factionThemes = {
     Horde = { 0.82, 0.16, 0.19 },
     Alliance = { 0.16, 0.42, 0.88 },
@@ -63,13 +63,6 @@ local function safe(s, max)
     return string.sub(s, 1, max or 48)
 end
 local function guildReady() return IsInGuild and IsInGuild() end
-local function channelReady()
-    local channel = DPTL_DB and DPTL_DB.shareChannel or "GUILD"
-    if channel == "GUILD" then return guildReady() end
-    if channel == "PARTY" then return IsInGroup and IsInGroup() and not (IsInRaid and IsInRaid()) end
-    if channel == "RAID" then return IsInRaid and IsInRaid() end
-    return false
-end
 local function checkRestriction(name, fn)
     if type(fn) ~= "function" then return false end
     local ok, restricted = pcall(fn)
@@ -99,19 +92,14 @@ local function sendResultName(result)
 end
 
 local function sendGuild(msg)
-    local channel = DPTL_DB.shareChannel or "GUILD"
-    if channel == "GUILD" and not guildReady() then return false, "Join a guild first or choose another sharing channel." end
-    if channel == "PARTY" and (not IsInGroup or not IsInGroup() or (IsInRaid and IsInRaid())) then
-        return false, "Join a party or choose another sharing channel."
-    end
-    if channel == "RAID" and (not IsInRaid or not IsInRaid()) then return false, "Join a raid or choose another sharing channel." end
+    if not guildReady() then return false, "Join a guild before sharing targets or rankings." end
     if not C_ChatInfo or not C_ChatInfo.SendAddonMessage then
         return false, "This client does not expose addon messaging."
     end
     local restriction = chatRestrictionReason()
     if restriction then return false, "Addon message blocked before sending: " .. restriction .. "." end
     -- Automatic reports are deferred until the client leaves combat and permits addon messages.
-    local called, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, channel)
+    local called, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "GUILD")
     if not called then return false, "C_ChatInfo.SendAddonMessage errored: " .. tostring(result) end
     if Enum and Enum.SendAddonMessageResult and result
         and result ~= Enum.SendAddonMessageResult.Success then
@@ -305,6 +293,12 @@ local function centeredLabel(parent, text, y, width, font)
     fs:SetText(text)
     return track(fs)
 end
+local function settingButton(parent, text, x, y, width, action)
+    local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    b:SetSize(width, 24); b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    b:SetText(text); b:SetScript("OnClick", action)
+    return b
+end
 local function row(text, y)
     local fs = ui.body:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     fs:SetPoint("TOP", ui.body, "TOP", 0, y)
@@ -333,7 +327,7 @@ local function styleFrame()
     local faction = UnitFactionGroup and UnitFactionGroup("player") or "Alliance"
     local accent = factionThemes[faction] or factionThemes.Alliance
     local blizzard = DPTL_DB.layout == "blizzlike"
-    local forge = DPTL_DB.layout == "forge"
+    local forge = DPTL_DB.layout == "modernblizz"
     if blizzard then
         ui.frame:SetBackdrop({ bgFile = "Interface\\FrameGeneral\\UI-Background-Rock",
             edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true,
@@ -525,7 +519,7 @@ refresh = function()
             if atlas and classIcon.SetAtlas then classIcon:SetAtlas(atlas) else classIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
             local reward = target.reward
             if reward == "" then
-                reward = string.format("%s |TInterface\\MoneyFrame\\UI-GoldIcon:12:12:0:0|t   %s |TInterface\\MoneyFrame\\UI-SilverIcon:12:12:0:0|t   %s |TInterface\\MoneyFrame\\UI-CopperIcon:12:12:0:0|t",
+            reward = string.format("%s |TInterface\\MoneyFrame\\UI-GoldIcon:12:12:0:0|t   %s |TInterface\\MoneyFrame\\UI-SilverIcon:12:12:0:0|t   %s |TInterface\\MoneyFrame\\UI-CopperIcon:12:12:0:0|t",
                     target.gold, target.silver, target.copper)
             end
             local details = rowFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -584,7 +578,7 @@ refresh = function()
         ui.targetScroll:SetVerticalScroll(0)
         local y = formTop
         local formWidth = math.min(478, bodyWidth - 16)
-        if not channelReady() then centeredLabel(ui.body, "Join the selected sharing channel to share targets and rankings.", y, formWidth); y = y - 24 end
+        if not guildReady() then centeredLabel(ui.body, "Join a guild to share targets and rankings.", y, formWidth); y = y - 24 end
         if ownedTargetCount(playerName()) >= MAX_TARGETS then
             centeredLabel(ui.body, "You have reached the limit of 3 active targets.", y, formWidth)
         else
@@ -630,7 +624,7 @@ refresh = function()
                 local ok, err = broadcastTarget(t)
                 if ok then
                     DPTL_DB.pendingTargets[key] = nil
-                    info("Target created and shared to " .. (DPTL_DB.shareChannel or "GUILD") .. ".")
+                    info("Target created and shared with your guild.")
                 else
                     DPTL_DB.pendingTargets[key] = true
                     info("Target saved locally; sharing is pending. " .. err)
@@ -643,28 +637,35 @@ refresh = function()
         if ui.targetScroll then ui.targetScroll:Hide() end
         local settingsLeft = (bodyWidth - 340) / 2
         centeredLabel(ui.body, "Choose a window appearance:", 0, bodyWidth)
-        button(ui.body, "Normal", settingsLeft, -30, 100, function()
+        settingButton(ui.body, "Normal", settingsLeft, -30, 100, function()
             DPTL_SetLayout("normal")
         end)
-        button(ui.body, "Blizzard-like", settingsLeft + 112, -30, 106, function()
+        settingButton(ui.body, "Blizzard-like", settingsLeft + 112, -30, 106, function()
             DPTL_SetLayout("blizzlike")
         end)
-        button(ui.body, "ForeverForge", settingsLeft + 230, -30, 110, function()
-            DPTL_SetLayout("forge")
+        settingButton(ui.body, "Modern-blizz", settingsLeft + 230, -30, 110, function()
+            DPTL_SetLayout("modernblizz")
         end)
-        dropdown(ui.body, "Sharing channel", { "Guild", "Party", "Raid" }, settingsLeft, -68, 150,
-            ({ GUILD = "Guild", PARTY = "Party", RAID = "Raid" })[DPTL_DB.shareChannel] or "Guild", function(value)
-                DPTL_DB.shareChannel = ({ Guild = "GUILD", Party = "PARTY", Raid = "RAID" })[value] or "GUILD"
-            end)
-        button(ui.body, "Share stats", settingsLeft, -111, 100, function()
+        local fontScale = math.max(0.8, math.min(1.6, tonumber(DPTL_DB.fontScale) or 1))
+        centeredLabel(ui.body, "Font size: " .. math.floor(fontScale * 100 + 0.5) .. "%", -67, bodyWidth)
+        settingButton(ui.body, "-", (bodyWidth - 122) / 2, -88, 36, function()
+            DPTL_SetFontScale((tonumber(DPTL_DB.fontScale) or 1) - 0.1)
+        end)
+        settingButton(ui.body, "+", (bodyWidth - 122) / 2 + 86, -88, 36, function()
+            DPTL_SetFontScale((tonumber(DPTL_DB.fontScale) or 1) + 0.1)
+        end)
+        settingButton(ui.body, "Reset", (bodyWidth - 122) / 2 + 41, -88, 40, function()
+            DPTL_SetFontScale(1)
+        end)
+        settingButton(ui.body, "Share stats", settingsLeft, -127, 100, function()
             local ok, err = shareStats()
-            if ok then info("Stats shared to " .. (DPTL_DB.shareChannel or "GUILD") .. ".") else info(err) end
+            if ok then info("Stats shared with your guild.") else info(err) end
         end)
-        button(ui.body, "DecentPVP tracker settings", settingsLeft, -148, 200, function()
+        settingButton(ui.body, "DecentPVP tracker settings", settingsLeft, -164, 200, function()
             if DecentPVPRank_OpenSettings then DecentPVPRank_OpenSettings() end
         end)
-        centeredLabel(ui.body, "Reports use the selected addon-message channel when the game allows sending.", -181, bodyWidth)
-        centeredLabel(ui.body, "Honorable kill credit is tracked automatically; Forever may not provide victim names.", -205, bodyWidth)
+        centeredLabel(ui.body, "Reports share with guild members when addon messages are permitted.", -197, bodyWidth)
+        centeredLabel(ui.body, "Honorable kill credit is tracked automatically; Forever may not provide victim names.", -221, bodyWidth)
     end
     if ui.settingsButton then
         ui.settingsButton:SetAlpha(ui.tab == "settings" and 1 or 0.82)
@@ -672,11 +673,22 @@ refresh = function()
 end
 
 function DPTL_SetLayout(layout)
-    if layout ~= "normal" and layout ~= "blizzlike" and layout ~= "forge" then layout = "forge" end
+    if layout == "forge" then layout = "modernblizz" end
+    if layout ~= "normal" and layout ~= "blizzlike" and layout ~= "modernblizz" then layout = "modernblizz" end
     DPTL_DB.layout = layout
     styleFrame()
     if DecentPVPRank_SetBlizzardUI then DecentPVPRank_SetBlizzardUI(layout == "blizzlike") end
-    if DecentPVPRank_SetForgeUI then DecentPVPRank_SetForgeUI(layout == "forge") end
+    if DecentPVPRank_SetForgeUI then DecentPVPRank_SetForgeUI(layout == "modernblizz") end
+end
+
+function DPTL_SetFontScale(scale)
+    DPTL_DB.fontScale = math.max(0.8, math.min(1.6, tonumber(scale) or 1))
+    if ui.body then
+        local windowScale = ui.contentScale or 1
+        ui.body:SetScale(windowScale * DPTL_DB.fontScale)
+        if DecentPVPRank_ResizeEmbedded then DecentPVPRank_ResizeEmbedded() end
+    end
+    if ui.tab == "settings" then refresh() end
 end
 
 function DPTL_SetBlizzardLayout(enabled)
@@ -893,15 +905,15 @@ local function buildUI()
         scale = math.max(0.4, scale)
         ui.body:ClearAllPoints()
         ui.body:SetSize(716, 581)
-        ui.body:SetScale(scale)
-        ui.body:SetPoint("CENTER", ui.inset, "CENTER")
         ui.contentScale = scale
+        ui.body:SetScale(scale * (tonumber(DPTL_DB.fontScale) or 1))
+        ui.body:SetPoint("CENTER", ui.inset, "CENTER")
     end
     layoutBodyContent()
     f:HookScript("OnSizeChanged", layoutBodyContent)
     if DecentPVPRank_EmbedInto then
         DecentPVPRank_EmbedInto(ui.body)
-        if DecentPVPRank_SetForgeUI then DecentPVPRank_SetForgeUI(DPTL_DB.layout == "forge") end
+        if DecentPVPRank_SetForgeUI then DecentPVPRank_SetForgeUI(DPTL_DB.layout == "modernblizz") end
         if DecentPVPRank_SetBlizzardUI then DecentPVPRank_SetBlizzardUI(DPTL_DB.layout == "blizzlike") end
         if DecentPVPRank_SetEmbeddedVisible then DecentPVPRank_SetEmbeddedVisible(ui.tab == "pvp") end
     end
@@ -992,6 +1004,10 @@ root:SetScript("OnEvent", function(self, event, ...)
         if name ~= ADDON then return end
         if type(DPTL_DB) ~= "table" then DPTL_DB = {} end
         fillDefaults(DPTL_DB, DB_DEFAULTS)
+        -- Existing saved layouts remain the player's choice; new installations default to Modern-blizz.
+        if DPTL_DB.layout == "forge" then DPTL_DB.layout = "modernblizz" end
+        DPTL_DB.shareChannel = nil
+        DPTL_DB.fontScale = math.max(0.8, math.min(1.6, tonumber(DPTL_DB.fontScale) or 1))
         ownStats()
         syncLifetimeKills()
     elseif event == "PLAYER_LOGIN" then

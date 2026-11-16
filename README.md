@@ -14,7 +14,7 @@ A guild PvP addon for **WoW Forever** (interface 16001). It has no external libr
 - Reads the character's lifetime honorable kill total from `GetPVPLifetimeStats()` and tracks daily and weekly honorable kill credits automatically from Forever's `PLAYER_PVP_KILLS_CHANGED` event.
 - Shows daily, weekly, and lifetime guild top 10 rankings.
 - Combines the Decent PvP Rank tracker in the **DecentPVP** tab, with Rank Points, Honor, Matches, Info, and Guild Kills subtabs.
-- Automatically shares updated count snapshots over the selected addon-message channel when the client permits sending. If a kill is credited during combat or messaging lockdown, its report is queued until combat ends and restrictions clear. **Share stats** remains available for a manual refresh.
+- Automatically shares updated count snapshots with guild members when addon messages are permitted. If a kill is credited during combat or messaging lockdown, its report is queued until combat ends and restrictions clear. **Share stats** remains available for a manual refresh.
 - Provides a guild target board for enemy player names, race and class portraits, reward amounts, and proof requirements.
 - Rewards can be entered as gold, silver, and copper or as free-form text.
 - Each character can maintain up to three active targets; only the character that created a target can cancel it. A member can enter a name to credit, then record and remove an eliminated target.
